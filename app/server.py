@@ -44,6 +44,14 @@ with app.app_context():
     load_knowledge_base()
 
 
+@app.route("/debug")
+def debug():
+    key = os.environ.get("GEMINI_API_KEY", "NOT SET")
+    return jsonify({
+        "key_set": key != "NOT SET",
+        "key_preview": key[:8] + "..." if key != "NOT SET" else "NOT SET"
+    })
+
 # ── Homepage ──────────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
