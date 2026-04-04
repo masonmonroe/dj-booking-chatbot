@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DJ Marc Edward</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  /* ── RESET ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  /* ── TOKENS ── */
+  :root {
+    --black:      #080808;
+    --deep:       #0f0f0f;
+    --surface:    #161616;
+    --surface-2:  #1e1e1e;
+    --border:     rgba(255,255,255,0.07);
+    --border-mid: rgba(255,255,255,0.13);
+    --gold:       #c9a84c;
+    --gold-soft:  #e8c97a;
+    --gold-dim:   rgba(201,168,76,0.12);
+    --white:      #f5f3ef;
+    --muted:      rgba(245,243,239,0.45);
+    --faint:      rgba(245,243,239,0.18);
+    --font-display: 'Bebas Neue', sans-serif;
+    --font-body:    'DM Sans', sans-serif;
+    --font-mono:    'DM Mono', monospace;
+  }
+
+  body {
+    background: var(--black);
+    color: var(--white);
+    font-family: var(--font-body);
+    font-weight: 300;
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+
+  /* ── NOISE OVERLAY ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 999;
+    opacity: 0.6;
+  }
+
+  /* ── NAV ── */
+  nav {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    padding: 1.5rem 3rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: linear-gradient(to bottom, rgba(8,8,8,0.95) 0%, transparent 100%);
+  }
+
+  .nav-logo {
+    font-family: var(--font-display);
+    font-size: 1.4rem;
+    letter-spacing: 0.12em;
+    color: var(--gold);
+    text-decoration: none;
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 2.5rem;
+    list-style: none;
+  }
+
+  .nav-links a {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-decoration: none;
+    transition: color 0.25s;
+  }
+
+  .nav-links a:hover { color: var(--white); }
+
+  /* ── HERO ── */
+  #hero {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0 3rem 5rem;
+    overflow: hidden;
+  }
+
+  .hero-bg {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 70% 40%, rgba(201,168,76,0.07) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 60% at 20% 70%, rgba(201,168,76,0.04) 0%, transparent 60%),
+      linear-gradient(165deg, #111 0%, #080808 60%, #0a0a08 100%);
+  }
+
+  /* Placeholder — replace with Marc's photo */
+  .hero-photo-placeholder {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 55%;
+    background: linear-gradient(105deg, transparent 20%, rgba(201,168,76,0.03) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .hero-photo-placeholder::after {
+    content: '[ Replace with hero photo of Marc ]';
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    color: rgba(201,168,76,0.25);
+    text-align: center;
+    padding: 1rem;
+  }
+
+  /* When you add a real photo, use this instead of the placeholder div:
+     <img src="marc-hero.jpg" alt="DJ Marc Edward" class="hero-photo"> */
+  .hero-photo {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 55%;
+    object-fit: cover;
+    object-position: center top;
+    mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.6) 30%, black 60%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.6) 30%, black 60%);
+  }
+
+  /* Fade photo into black on left */
+  .hero-photo-fade {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 55%;
+    background: linear-gradient(to right, var(--black) 0%, transparent 35%);
+    pointer-events: none;
+  }
+
+  .hero-content {
+    position: relative;
+    z-index: 2;
+    max-width: 580px;
+  }
+
+  .hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .hero-eyebrow::before {
+    content: '';
+    display: inline-block;
+    width: 2rem;
+    height: 1px;
+    background: var(--gold);
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(4.5rem, 10vw, 8.5rem);
+    line-height: 0.92;
+    letter-spacing: 0.02em;
+    color: var(--white);
+    margin-bottom: 1.5rem;
+  }
+
+  h1 span {
+    color: var(--gold);
+    display: block;
+  }
+
+  .hero-sub {
+    font-size: 0.95rem;
+    color: var(--muted);
+    max-width: 380px;
+    margin-bottom: 2.5rem;
+    line-height: 1.8;
+  }
+
+  .hero-cta {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.85rem 2rem;
+    background: var(--gold);
+    color: var(--black);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    text-decoration: none;
+    transition: background 0.2s, transform 0.15s;
+  }
+
+  .btn-primary:hover {
+    background: var(--gold-soft);
+    transform: translateY(-1px);
+  }
+
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.85rem 2rem;
+    border: 1px solid var(--border-mid);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    text-decoration: none;
+    transition: border-color 0.2s, color 0.2s;
+  }
+
+  .btn-ghost:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+
+  .hero-scroll {
+    position: absolute;
+    bottom: 2rem;
+    right: 3rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    z-index: 2;
+  }
+
+  .hero-scroll span {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faint);
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+  }
+
+  .scroll-line {
+    width: 1px;
+    height: 3rem;
+    background: linear-gradient(to bottom, var(--gold), transparent);
+    animation: scrollpulse 2s ease-in-out infinite;
+  }
+
+  @keyframes scrollpulse {
+    0%, 100% { opacity: 0.3; transform: scaleY(1); }
+    50% { opacity: 1; transform: scaleY(0.6); }
+  }
+
+  /* ── SECTION BASE ── */
+  section {
+    padding: 7rem 3rem;
+    position: relative;
+  }
+
+  .section-label {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .section-label::before {
+    content: '';
+    display: inline-block;
+    width: 1.5rem;
+    height: 1px;
+    background: var(--gold);
+  }
+
+  h2 {
+    font-family: var(--font-display);
+    font-size: clamp(2.5rem, 5vw, 4rem);
+    letter-spacing: 0.04em;
+    line-height: 1;
+    color: var(--white);
+    margin-bottom: 3rem;
+  }
+
+  /* ── SERVICES ── */
+  #services {
+    background: var(--deep);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .services-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1px;
+    border: 1px solid var(--border);
+    margin-top: 3rem;
+  }
+
+  .service-card {
+    padding: 2rem 1.75rem;
+    background: var(--surface);
+    transition: background 0.25s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .service-card::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--gold);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s ease;
+  }
+
+  .service-card:hover { background: var(--surface-2); }
+  .service-card:hover::after { transform: scaleX(1); }
+
+  .service-icon {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .service-title {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    letter-spacing: 0.04em;
+    color: var(--white);
+    margin-bottom: 0.5rem;
+  }
+
+  .service-desc {
+    font-size: 0.82rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ── GENRES ── */
+  .genre-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 2rem;
+  }
+
+  .pill {
+    padding: 0.4rem 1.1rem;
+    border: 1px solid var(--border-mid);
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    transition: all 0.2s;
+  }
+
+  .pill:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+    background: var(--gold-dim);
+  }
+
+  /* ── VENUES ── */
+  #venues {
+    background: var(--black);
+  }
+
+  .venues-layout {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr;
+    gap: 5rem;
+    align-items: start;
+  }
+
+  .venues-intro p {
+    font-size: 0.9rem;
+    color: var(--muted);
+    line-height: 1.9;
+    margin-bottom: 1.5rem;
+  }
+
+  .venue-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border: 1px solid var(--border);
+  }
+
+  .venue-item {
+    padding: 1.1rem 1.4rem;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    transition: background 0.2s;
+  }
+
+  .venue-item:hover { background: var(--surface); }
+
+  .venue-item:nth-child(2n) { border-right: none; }
+
+  .venue-name {
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--white);
+    margin-bottom: 0.15rem;
+  }
+
+  .venue-loc {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  /* ── GALLERY ── */
+  #gallery {
+    background: var(--deep);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4rem;
+  }
+
+  .gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    grid-template-rows: 260px 260px;
+    gap: 4px;
+    margin-top: 3rem;
+  }
+
+  .gallery-item {
+    background: var(--surface);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .gallery-item:nth-child(1) { grid-column: 1 / 6; grid-row: 1 / 2; }
+  .gallery-item:nth-child(2) { grid-column: 6 / 9; grid-row: 1 / 2; }
+  .gallery-item:nth-child(3) { grid-column: 9 / 13; grid-row: 1 / 3; }
+  .gallery-item:nth-child(4) { grid-column: 1 / 4; grid-row: 2 / 3; }
+  .gallery-item:nth-child(5) { grid-column: 4 / 9; grid-row: 2 / 3; }
+
+  .gallery-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: brightness(0.75) saturate(0.8);
+    transition: filter 0.4s, transform 0.5s;
+  }
+
+  .gallery-item:hover img {
+    filter: brightness(0.9) saturate(1);
+    transform: scale(1.03);
+  }
+
+  /* Placeholder styling for gallery items without photos yet */
+  .gallery-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  .gallery-placeholder span {
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.1em;
+    color: rgba(201,168,76,0.2);
+    text-align: center;
+    padding: 1rem;
+  }
+
+  /* ── BOOKING / CHAT ── */
+  #booking {
+    background: var(--black);
+    padding: 7rem 3rem;
+  }
+
+  .booking-layout {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    gap: 5rem;
+    align-items: start;
+  }
+
+  .booking-intro p {
+    font-size: 0.9rem;
+    color: var(--muted);
+    line-height: 1.9;
+    margin-bottom: 1.25rem;
+  }
+
+  .booking-detail {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.25rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .booking-detail:first-of-type { border-top: 1px solid var(--border); }
+
+  .detail-label {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--gold);
+    min-width: 90px;
+    padding-top: 0.15rem;
+  }
+
+  .detail-value {
+    font-size: 0.85rem;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ── CHAT WIDGET ── */
+  .chat-widget {
+    border: 1px solid var(--border-mid);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    height: 520px;
+  }
+
+  .chat-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--surface-2);
+  }
+
+  .chat-avatar {
+    width: 36px;
+    height: 36px;
+    background: var(--gold-dim);
+    border: 1px solid rgba(201,168,76,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .chat-avatar svg {
+    width: 18px;
+    height: 18px;
+    fill: var(--gold);
+  }
+
+  .chat-header-info {}
+
+  .chat-name {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--white);
+    line-height: 1.2;
+  }
+
+  .chat-status {
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #4caf78;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .chat-status::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #4caf78;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-mid) transparent;
+  }
+
+  .msg {
+    max-width: 82%;
+    line-height: 1.55;
+  }
+
+  .msg-bot {
+    align-self: flex-start;
+  }
+
+  .msg-user {
+    align-self: flex-end;
+  }
+
+  .msg-bubble {
+    padding: 0.7rem 1rem;
+    font-size: 0.82rem;
+  }
+
+  .msg-bot .msg-bubble {
+    background: var(--surface-2);
+    color: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 0 8px 8px 8px;
+  }
+
+  .msg-user .msg-bubble {
+    background: var(--gold-dim);
+    color: var(--white);
+    border: 1px solid rgba(201,168,76,0.2);
+    border-radius: 8px 0 8px 8px;
+  }
+
+  .msg-time {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    color: var(--faint);
+    margin-top: 0.3rem;
+    padding: 0 0.25rem;
+  }
+
+  .msg-bot .msg-time { text-align: left; }
+  .msg-user .msg-time { text-align: right; }
+
+  .chat-input-area {
+    padding: 1rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 0.6rem;
+    background: var(--surface-2);
+  }
+
+  .chat-input {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border-mid);
+    color: var(--white);
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    font-weight: 300;
+    padding: 0.65rem 1rem;
+    outline: none;
+    transition: border-color 0.2s;
+    resize: none;
+  }
+
+  .chat-input::placeholder { color: var(--faint); }
+  .chat-input:focus { border-color: rgba(201,168,76,0.4); }
+
+  .chat-send {
+    width: 40px;
+    height: 40px;
+    background: var(--gold);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.2s, transform 0.1s;
+    align-self: flex-end;
+  }
+
+  .chat-send:hover { background: var(--gold-soft); }
+  .chat-send:active { transform: scale(0.95); }
+
+  .chat-send svg {
+    width: 16px;
+    height: 16px;
+    fill: var(--black);
+  }
+
+  .typing-indicator {
+    display: none;
+    align-self: flex-start;
+  }
+
+  .typing-indicator.visible { display: flex; }
+
+  .typing-dots {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 0 8px 8px 8px;
+    padding: 0.7rem 1rem;
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .typing-dots span {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: typingbounce 1.2s ease-in-out infinite;
+  }
+
+  .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes typingbounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  /* ── CONTACT ── */
+  #contact {
+    background: var(--deep);
+    border-top: 1px solid var(--border);
+  }
+
+  .contact-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    align-items: start;
+  }
+
+  .contact-links {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-top: 1.5rem;
+    border: 1px solid var(--border);
+  }
+
+  .contact-link {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    padding: 1.1rem 1.4rem;
+    border-bottom: 1px solid var(--border);
+    text-decoration: none;
+    transition: background 0.2s;
+  }
+
+  .contact-link:last-child { border-bottom: none; }
+  .contact-link:hover { background: var(--surface); }
+
+  .contact-link:hover .contact-link-label { color: var(--gold); }
+
+  .contact-link-icon {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border-mid);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 0.85rem;
+  }
+
+  .contact-link-info {}
+
+  .contact-link-label {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    transition: color 0.2s;
+  }
+
+  .contact-link-value {
+    font-size: 0.85rem;
+    color: var(--white);
+    margin-top: 0.1rem;
+  }
+
+  .contact-right p {
+    font-size: 0.9rem;
+    color: var(--muted);
+    line-height: 1.9;
+    margin-bottom: 1.25rem;
+  }
+
+  .rate-display {
+    margin-top: 2rem;
+    padding: 1.75rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    position: relative;
+  }
+
+  .rate-display::before {
+    content: 'Base rate';
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--gold);
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  .rate-number {
+    font-family: var(--font-display);
+    font-size: 3rem;
+    letter-spacing: 0.02em;
+    color: var(--white);
+    line-height: 1;
+  }
+
+  .rate-unit {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-top: 0.4rem;
+  }
+
+  .rate-note {
+    margin-top: 1rem;
+    font-size: 0.75rem;
+    color: var(--faint);
+    line-height: 1.6;
+  }
+
+  /* ── FOOTER ── */
+  footer {
+    padding: 2rem 3rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--black);
+  }
+
+  .footer-logo {
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    letter-spacing: 0.12em;
+    color: var(--gold);
+  }
+
+  .footer-copy {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* ── DIVIDER ── */
+  .gold-line {
+    width: 3rem;
+    height: 1px;
+    background: var(--gold);
+    margin: 2rem 0;
+  }
+
+  /* ── ANIMATIONS ── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.65s ease, transform 0.65s ease;
+  }
+
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 900px) {
+    nav { padding: 1.25rem 1.5rem; }
+    .nav-links { display: none; }
+    section { padding: 5rem 1.5rem; }
+    #hero { padding: 0 1.5rem 4rem; }
+    h1 { font-size: clamp(3.5rem, 14vw, 5rem); }
+    .hero-photo-placeholder { width: 100%; opacity: 0.25; }
+    .hero-photo-fade { width: 100%; }
+    .venues-layout { grid-template-columns: 1fr; gap: 2.5rem; }
+    .booking-layout { grid-template-columns: 1fr; gap: 3rem; }
+    .contact-layout { grid-template-columns: 1fr; gap: 2.5rem; }
+    .gallery-grid {
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: repeat(3, 200px);
+    }
+    .gallery-item:nth-child(1) { grid-column: 1 / 2; grid-row: 1; }
+    .gallery-item:nth-child(2) { grid-column: 2 / 3; grid-row: 1; }
+    .gallery-item:nth-child(3) { grid-column: 1 / 3; grid-row: 2; }
+    .gallery-item:nth-child(4) { grid-column: 1 / 2; grid-row: 3; }
+    .gallery-item:nth-child(5) { grid-column: 2 / 3; grid-row: 3; }
+    footer { flex-direction: column; gap: 0.75rem; text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── NAV ── -->
+<nav>
+  <a href="#hero" class="nav-logo">DJ Marc Edward</a>
+  <ul class="nav-links">
+    <li><a href="#services">Services</a></li>
+    <li><a href="#venues">Venues</a></li>
+    <li><a href="#gallery">Gallery</a></li>
+    <li><a href="#booking">Book</a></li>
+    <li><a href="#contact">Contact</a></li>
+  </ul>
+</nav>
+
+<!-- ── HERO ── -->
+<section id="hero">
+  <div class="hero-bg"></div>
+
+  <!--
+    PHOTO INSTRUCTIONS:
+    1. Replace the .hero-photo-placeholder div below with:
+       <img src="your-photo.jpg" alt="DJ Marc Edward" class="hero-photo">
+    2. Add the fade div after it:
+       <div class="hero-photo-fade"></div>
+  -->
+  <div class="hero-photo-placeholder"></div>
+
+  <div class="hero-content">
+    <div class="hero-eyebrow">Open-Format DJ · Philippines</div>
+    <h1>
+      DJ Marc
+      <span>Edward</span>
+    </h1>
+    <p class="hero-sub">
+      High-energy, crowd-reading performances for events that demand more than background music.
+    </p>
+    <div class="hero-cta">
+      <a href="#booking" class="btn-primary">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M6 0L7.5 4.5H12L8.25 7.25L9.75 12L6 9L2.25 12L3.75 7.25L0 4.5H4.5Z"/></svg>
+        Book Now
+      </a>
+      <a href="#venues" class="btn-ghost">View Experience</a>
+    </div>
+  </div>
+
+  <div class="hero-scroll">
+    <div class="scroll-line"></div>
+    <span>Scroll</span>
+  </div>
+</section>
+
+<!-- ── SERVICES ── -->
+<section id="services">
+  <div class="section-label">What I Do</div>
+  <h2>Services</h2>
+
+  <div class="services-grid reveal">
+    <div class="service-card">
+      <div class="service-icon">🎂</div>
+      <div class="service-title">Birthdays</div>
+      <p class="service-desc">Milestone celebrations, debut parties, kids' parties — any age, any vibe.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon">💍</div>
+      <div class="service-title">Weddings</div>
+      <p class="service-desc">From elegant dinner sets to late-night dance floors. Your day, your soundtrack.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon">🏢</div>
+      <div class="service-title">Corporate</div>
+      <p class="service-desc">Company events, product launches, and office parties done right.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon">🎉</div>
+      <div class="service-title">Private Events</div>
+      <p class="service-desc">Reunions, baptismals, and intimate gatherings that need the right energy.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon">🎵</div>
+      <div class="service-title">Club Gigs</div>
+      <p class="service-desc">Experienced across Metro Manila's top venues and resort spots.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon">🔊</div>
+      <div class="service-title">Lights & Sound</div>
+      <p class="service-desc">Basic PA and lighting package available for small to medium events.</p>
+    </div>
+  </div>
+
+  <div class="gold-line"></div>
+  <div class="section-label reveal">Genres</div>
+  <div class="genre-pills reveal">
+    <span class="pill">Open Format</span>
+    <span class="pill">Hip Hop</span>
+    <span class="pill">R&B</span>
+    <span class="pill">Top 40</span>
+    <span class="pill">70s – 80s</span>
+    <span class="pill">90s</span>
+    <span class="pill">OPM</span>
+  </div>
+</section>
+
+<!-- ── VENUES ── -->
+<section id="venues">
+  <div class="venues-layout">
+    <div class="venues-intro reveal">
+      <div class="section-label">Track Record</div>
+      <h2>Past<br>Venues</h2>
+      <p>
+        From Poblacion's late-night bars to resort pools in La Union and Calatagan — 
+        Marc has played every room, every crowd.
+      </p>
+      <p>
+        Experience across Metro Manila, Laguna, and beyond means no venue 
+        is too unfamiliar and no crowd is left standing still.
+      </p>
+      <a href="#booking" class="btn-ghost" style="margin-top:1rem; display:inline-flex;">
+        Check Availability
+      </a>
+    </div>
+
+    <div class="venue-list reveal">
+      <div class="venue-item">
+        <div class="venue-name">Z Hostel</div>
+        <div class="venue-loc">Poblacion, Makati</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">White Banana</div>
+        <div class="venue-loc">Poblacion, Makati</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">Tiabuela</div>
+        <div class="venue-loc">Poblacion, Makati</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">Reserve</div>
+        <div class="venue-loc">Ortigas / BGC</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">Burnt Bean</div>
+        <div class="venue-loc">BGC High Street</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">Cantina Alegria</div>
+        <div class="venue-loc">Molito, Alabang</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">Tipple and Slaw</div>
+        <div class="venue-loc">Katipunan</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">The Vault</div>
+        <div class="venue-loc">Greenhills</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">Man Cave</div>
+        <div class="venue-loc">Sta. Mesa</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">ShackX</div>
+        <div class="venue-loc">Lumban, Laguna</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">COVA</div>
+        <div class="venue-loc">La Union</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">UNWND</div>
+        <div class="venue-loc">Calatagan</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">Fat Wave Surf Resort</div>
+        <div class="venue-loc">La Union</div>
+      </div>
+      <div class="venue-item">
+        <div class="venue-name">Dasiks</div>
+        <div class="venue-loc">Pagsanjan, Laguna</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── GALLERY ── -->
+<section id="gallery">
+  <div class="section-label">The Look</div>
+  <h2>Gallery</h2>
+
+  <!--
+    PHOTO INSTRUCTIONS:
+    Replace each .gallery-placeholder div with:
+    <img src="your-photo.jpg" alt="description">
+    Photos should be high contrast, action shots work best for the dark theme.
+  -->
+  <div class="gallery-grid reveal">
+    <div class="gallery-item">
+      <div class="gallery-placeholder"><span>Photo 1<br>Landscape · wide shot</span></div>
+    </div>
+    <div class="gallery-item">
+      <div class="gallery-placeholder"><span>Photo 2<br>Portrait</span></div>
+    </div>
+    <div class="gallery-item">
+      <div class="gallery-placeholder"><span>Photo 3<br>Tall format</span></div>
+    </div>
+    <div class="gallery-item">
+      <div class="gallery-placeholder"><span>Photo 4<br>Portrait</span></div>
+    </div>
+    <div class="gallery-item">
+      <div class="gallery-placeholder"><span>Photo 5<br>Landscape · wide shot</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── BOOKING / CHAT ── -->
+<section id="booking">
+  <div class="booking-layout">
+    <div class="booking-intro reveal">
+      <div class="section-label">Let's Talk</div>
+      <h2>Book Marc</h2>
+      <p>
+        Use the chat to get a quote instantly. Just share your event details 
+        and Marc's assistant will put together an estimate on the spot.
+      </p>
+      <p>
+        Prefer to reach out directly? All channels below work — 
+        responses typically within the day.
+      </p>
+
+      <div class="booking-detail">
+        <div class="detail-label">Rate</div>
+        <div class="detail-value">₱3,000 / hour · Lights & sound available</div>
+      </div>
+      <div class="booking-detail">
+        <div class="detail-label">Coverage</div>
+        <div class="detail-value">Metro Manila, Laguna, Batangas, La Union, and beyond</div>
+      </div>
+      <div class="booking-detail">
+        <div class="detail-label">Response</div>
+        <div class="detail-value">Within the day — usually faster</div>
+      </div>
+    </div>
+
+    <!-- CHAT WIDGET -->
+    <div class="chat-widget reveal" id="chat-widget">
+      <div class="chat-header">
+        <div class="chat-avatar">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 3C8.5 3 7 5 7 7C7 9 8 10.5 10 11C9 11.5 7 12.5 7 15H17C17 12.5 15 11.5 14 11C16 10.5 17 9 17 7C17 5 15.5 3 12 3Z"/>
+          </svg>
+        </div>
+        <div class="chat-header-info">
+          <div class="chat-name">Marc's Assistant</div>
+          <div class="chat-status">Online now</div>
+        </div>
+      </div>
+
+      <div class="chat-messages" id="chat-messages">
+        <div class="msg msg-bot">
+          <div class="msg-bubble">
+            Hey there! 👋 I'm the assistant for DJ Marc Edward.<br><br>
+            I can help you check availability, talk through music choices, or get you a quote for your event.<br><br>
+            Before we get started — what's your name? 😊
+          </div>
+          <div class="msg-time">Just now</div>
+        </div>
+
+        <div class="typing-indicator" id="typing">
+          <div class="typing-dots">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <textarea
+          id="chat-input"
+          class="chat-input"
+          placeholder="Type a message..."
+          rows="1"
+        ></textarea>
+        <button class="chat-send" id="chat-send" aria-label="Send message">
+          <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+            <path d="M14.5 8L1.5 2L4 8L1.5 14L14.5 8Z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CONTACT ── -->
+<section id="contact">
+  <div class="contact-layout">
+    <div class="reveal">
+      <div class="section-label">Get in Touch</div>
+      <h2>Contact</h2>
+      <div class="contact-links">
+        <a href="https://www.facebook.com/djmarcedward/" target="_blank" rel="noopener" class="contact-link">
+          <div class="contact-link-icon">f</div>
+          <div class="contact-link-info">
+            <div class="contact-link-label">Facebook</div>
+            <div class="contact-link-value">facebook.com/djmarcedward</div>
+          </div>
+        </a>
+        <a href="https://instagram.com/djmarcedward" target="_blank" rel="noopener" class="contact-link">
+          <div class="contact-link-icon">ig</div>
+          <div class="contact-link-info">
+            <div class="contact-link-label">Instagram</div>
+            <div class="contact-link-value">@djmarcedward</div>
+          </div>
+        </a>
+        <a href="mailto:djmarcedward@gmail.com" class="contact-link">
+          <div class="contact-link-icon">@</div>
+          <div class="contact-link-info">
+            <div class="contact-link-label">Email</div>
+            <div class="contact-link-value">djmarcedward@gmail.com</div>
+          </div>
+        </a>
+        <a href="tel:+639283518077" class="contact-link">
+          <div class="contact-link-icon">☎</div>
+          <div class="contact-link-info">
+            <div class="contact-link-label">Mobile</div>
+            <div class="contact-link-value">+63 928 351 8077</div>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <div class="contact-right reveal">
+      <p>
+        For formal inquiries, availability checks, or detailed package discussions, 
+        reach Marc directly via any channel. He responds to all messages personally.
+      </p>
+      <p>
+        For same-day bookings or urgent inquiries, mobile and Facebook Messenger 
+        are the fastest way to reach him.
+      </p>
+
+      <div class="rate-display">
+        <div class="rate-number">₱3,000</div>
+        <div class="rate-unit">per hour · DJ performance only</div>
+        <div class="rate-note">
+          + Lights & sound package available (₱3,000/event)<br>
+          Transportation, food, and accommodation not included.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer>
+  <div class="footer-logo">DJ Marc Edward</div>
+  <div class="footer-copy">© 2026 · All rights reserved</div>
+</footer>
+
+<script>
+  /* ── SCROLL REVEAL ── */
+  const reveals = document.querySelectorAll('.reveal');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) {
+        setTimeout(() => e.target.classList.add('visible'), i * 80);
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  reveals.forEach(el => observer.observe(el));
+
+  /* ── CHAT WIDGET ── */
+  const messagesEl  = document.getElementById('chat-messages');
+  const inputEl     = document.getElementById('chat-input');
+  const sendBtn     = document.getElementById('chat-send');
+  const typingEl    = document.getElementById('typing');
+
+  /* ── WEBHOOK URL ── */
+  /*
+    Replace this with your actual Render webhook URL once deployed.
+    Example: 'https://dj-marc-bot.onrender.com/webhook'
+  */
+  const WEBHOOK_URL = '/api/chat';
+
+  /* session state — persisted in memory for the page session */
+  let botState = null;
+
+  function getTime() {
+    return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function appendMessage(text, role) {
+    typingEl.classList.remove('visible');
+
+    const msg  = document.createElement('div');
+    msg.className = `msg msg-${role}`;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    bubble.innerHTML = text.replace(/\n/g, '<br>');
+
+    const time = document.createElement('div');
+    time.className = 'msg-time';
+    time.textContent = getTime();
+
+    msg.appendChild(bubble);
+    msg.appendChild(time);
+    messagesEl.insertBefore(msg, typingEl);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function showTyping() {
+    typingEl.classList.add('visible');
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  async function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    appendMessage(text, 'user');
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+    showTyping();
+
+    try {
+      const res = await fetch(WEBHOOK_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ message: text, state: botState }),
+      });
+
+      const data = await res.json();
+      botState = data.state;
+      appendMessage(data.response, 'bot');
+
+    } catch (err) {
+      appendMessage(
+        "Sorry, I'm having trouble connecting right now. " +
+        "You can reach Marc directly at djmarcedward@gmail.com or +63 928 351 8077.",
+        'bot'
+      );
+    }
+  }
+
+  /* auto-resize textarea */
+  inputEl.addEventListener('input', () => {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 100) + 'px';
+  });
+
+  inputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  sendBtn.addEventListener('click', sendMessage);
+</script>
+</body>
+</html>
