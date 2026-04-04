@@ -1337,7 +1337,21 @@
   const WEBHOOK_URL = '/api/chat';
 
   /* session state — persisted in memory for the page session */
-  let botState = { greeted: true };
+  let botState = {
+    lead_info: { event_type: null, location: null, date: null, duration: null },
+    name: null,
+    contact: null,
+    booking_intent: false,
+    follow_up_mode: false,
+    asked_contact: false,
+    contact_followed_up: false,
+    quote_given: false,
+    lead_logged: false,
+    lead_id: null,
+    source: "web",
+    greeted: true,
+    history: []
+  };
 
   function getTime() {
     return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
