@@ -40,11 +40,8 @@ _sessions: dict = {}
 
 
 # ── Startup ──────────────────────────────────────────────────────────────────
-@app.before_request
-def startup():
-    if not getattr(app, "_kb_loaded", False):
-        load_knowledge_base()
-        app._kb_loaded = True
+with app.app_context():
+    load_knowledge_base()
 
 
 # ── Homepage ──────────────────────────────────────────────────────────────────

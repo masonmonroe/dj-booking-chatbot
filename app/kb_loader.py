@@ -10,10 +10,14 @@ that are already loaded (upsert by section ID).
 
 import re
 import chromadb
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 # Shared ChromaDB client and collection
 chroma_client = chromadb.Client()
-collection    = chroma_client.get_or_create_collection(name="dj_kb")
+collection = chroma_client.get_or_create_collection(
+    name="dj_kb",
+    embedding_function=DefaultEmbeddingFunction(),
+)
 
 
 def parse_knowledge_base(filepath="data/knowledge_base.txt"):
