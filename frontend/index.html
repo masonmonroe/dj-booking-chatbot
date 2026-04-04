@@ -1296,7 +1296,7 @@
         <div class="rate-number">₱3,000</div>
         <div class="rate-unit">per hour · DJ performance only</div>
         <div class="rate-note">
-          + Lights & sound package available (₱3,000/event)<br>
+          + Lights & sound package available (starts at ₱3,000/event)<br>
           Transportation, food, and accommodation not included.
         </div>
       </div>
@@ -1337,7 +1337,7 @@
   const WEBHOOK_URL = '/api/chat';
 
   /* session state — persisted in memory for the page session */
-  let botState = null;
+  let botState = { greeted: true };
 
   function getTime() {
     return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
