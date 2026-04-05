@@ -566,18 +566,26 @@ def process_message(user_input: str, state: dict) -> tuple:
             )
         append_history(state, "assistant", msg)
         return msg, state, actions
+    
+    # 5 ── Skip classification if we don't have a name yet ───────────────────────
+    if not state["name"]:
+        msg = (
+            "I'd love to help! Before anything else — what's your name? 😊"
+        )
+        append_history(state, "assistant", msg)
+        return msg, state, actions
 
-    # 5 ── Classify intent ────────────────────────────────────────────────────
+    # 6 ── Classify intent ────────────────────────────────────────────────────
     intent = classify_intent(user_input)
 
-    # 6 ── General inquiry → KB answer, no event-detail interrogation ─────────
+    # 7 ── General inquiry → KB answer, no event-detail interrogation ─────────
     if intent == "general":
         return handle_general_inquiry(user_input, state, actions)
 
-    # 7 ── Booking path ───────────────────────────────────────────────────────
+    # 8 ── Booking path ───────────────────────────────────────────────────────
     state["booking_intent"] = True
 
-    # 8 ── Name first ─────────────────────────────────────────────────────────
+    # 9 ── Name first ─────────────────────────────────────────────────────────
     if not state["name"]:
         msg = (
             "I'd love to help you get a quote! "
@@ -588,7 +596,7 @@ def process_message(user_input: str, state: dict) -> tuple:
 
     fn = first_name(state)
 
-    # 9 ── Collect missing event details ──────────────────────────────────────
+    # 10 ── Collect missing event details ──────────────────────────────────────
     missing = get_missing_fields(state)
 
     # Reset vague location so it gets re-asked
@@ -617,7 +625,7 @@ def process_message(user_input: str, state: dict) -> tuple:
         append_history(state, "assistant", msg)
         return msg, state, actions
 
-    # 10 ── Ask for contact (CLI / Streamlit only, once) ──────────────────────
+    # 11 ── Ask for contact (CLI / Streamlit only, once) ──────────────────────
     if should_ask_contact(state):
         state["asked_contact"] = True
         msg = (
@@ -629,7 +637,7 @@ def process_message(user_input: str, state: dict) -> tuple:
         append_history(state, "assistant", msg)
         return msg, state, actions
 
-    # 11 ── All info present → generate quote ─────────────────────────────────
+    # 12 ── All info present → generate quote ─────────────────────────────────
     return generate_quote(state, actions)
 
 
