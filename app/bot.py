@@ -561,7 +561,7 @@ def process_message(user_input: str, state: dict) -> tuple:
             )
         else:
             msg = (
-                "Got it — I'll pass this along to Marc right away.\n"
+                "Noted — I'll pass this along to Marc right away.\n"
                 "He'll review your event details and get back to you with options 🎧"
             )
         append_history(state, "assistant", msg)
@@ -618,7 +618,7 @@ def process_message(user_input: str, state: dict) -> tuple:
             )
         else:
             msg = (
-                f"Got it, {fn}! Just need a couple more details for a proper quote.\n"
+                f"Thanks {fn}! Just need a couple more details for a proper quote.\n"
                 f"Can you share the {label_str}?"
             )
 
