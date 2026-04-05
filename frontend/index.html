@@ -144,11 +144,11 @@
     top: 0;
     bottom: 0;
     width: 55%;
-    object-fit: cover;
-    object-position: center top;
-    mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.6) 30%, black 60%);
-    -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,0.6) 30%, black 60%);
-  }
+
+    object-fit: contain;              /* key change */
+    object-position: right bottom;    /* anchors you naturally */
+
+    filter: drop-shadow(0 20px 40px rgba(0,0,0,0.6));
 
   /* Fade photo into black on left */
   .hero-photo-fade {
@@ -157,7 +157,7 @@
     top: 0;
     bottom: 0;
     width: 55%;
-    background: linear-gradient(to right, var(--black) 0%, transparent 35%);
+    background: linear-gradient(to right, var(--black) 0%, transparent 50%);
     pointer-events: none;
   }
 
