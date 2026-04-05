@@ -112,43 +112,16 @@
       linear-gradient(165deg, #111 0%, #080808 60%, #0a0a08 100%);
   }
 
-  /* Placeholder — replace with Marc's photo */
-  .hero-photo-placeholder {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 55%;
-    background: linear-gradient(105deg, transparent 20%, rgba(201,168,76,0.03) 100%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-  }
-
-  .hero-photo-placeholder::after {
-    content: '[ Replace with hero photo of Marc ]';
-    font-family: var(--font-mono);
-    font-size: 0.65rem;
-    letter-spacing: 0.1em;
-    color: rgba(201,168,76,0.25);
-    text-align: center;
-    padding: 1rem;
-  }
-
   /* When you add a real photo, use this instead of the placeholder div:
      <img src="marc-hero.jpg" alt="DJ Marc Edward" class="hero-photo"> */
   .hero-photo {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 55%;
-
-    object-fit: contain;              /* key change */
-    object-position: right bottom;    /* anchors you naturally */
-
-    filter: drop-shadow(0 20px 40px rgba(0,0,0,0.6));
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      width: 48%;
+      object-fit: contain;
+      object-position: bottom right;
+  }
 
   /* Fade photo into black on left */
   .hero-photo-fade {
@@ -157,7 +130,7 @@
     top: 0;
     bottom: 0;
     width: 55%;
-    background: linear-gradient(to right, var(--black) 0%, transparent 50%);
+    background: linear-gradient(to right, var(--black) 0%, transparent 35%);
     pointer-events: none;
   }
 
@@ -981,7 +954,6 @@
        <div class="hero-photo-fade"></div>
   -->
   <img src="images/marc-hero.png" alt="DJ Marc Edward" class="hero-photo">
-  <div class="hero-photo-fade"></div>
 
   <div class="hero-content">
     <div class="hero-eyebrow">Open-Format DJ · Philippines</div>
