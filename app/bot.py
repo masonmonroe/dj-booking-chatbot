@@ -359,6 +359,17 @@ def should_ask_contact(state: dict) -> bool:
 # ─────────────────────────────────────────
 # SIGNAL DETECTORS
 # ─────────────────────────────────────────
+def is_offering_contact(text: str) -> bool:
+    phrases = [
+        "need my contact", "need my number", "need my email",
+        "want my contact", "want my number", "want my email",
+        "here's my number", "here's my email",
+        "my number is", "my email is", "my contact is",
+        "do you need my", "don't you need my", "should i give",
+        "can i give you my",
+    ]
+    return any(p in text.lower() for p in phrases)
+
 def is_negative_closing(text: str) -> bool:
     phrases = [
         "too expensive", "not interested", "pass", "maybe next time",
@@ -564,6 +575,15 @@ def process_message(user_input: str, state: dict) -> tuple:
                 "Noted — I'll pass this along to Marc right away.\n"
                 "He'll review your event details and get back to you with options 🎧"
             )
+        append_history(state, "assistant", msg)
+        return msg, state, actions
+    
+    # 4.5 ── User offering contact info ──────────────────────────────────────
+    if is_offering_contact(user_input) and not state["contact"]:
+        msg = (
+            "Yes please! Go ahead and share your number or email "
+            "and I'll make sure Marc gets it. 😊"
+        )
         append_history(state, "assistant", msg)
         return msg, state, actions
     
