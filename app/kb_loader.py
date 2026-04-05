@@ -22,10 +22,6 @@ def load_knowledge_base(filepath="data/knowledge_base.txt"):
 
 
 def retrieve_context(query, n_results=3):
-    """
-    Simple keyword match — fast, no dependencies, works fine for a small KB.
-    Returns the top n_results most relevant sections as a joined string.
-    """
     if not _kb_documents:
         return ""
 
@@ -35,8 +31,17 @@ def retrieve_context(query, n_results=3):
     for doc in _kb_documents:
         doc_words = set(doc["text"].lower().split())
         score     = len(query_words & doc_words)
-        scored.append((score, doc["text"]))
+        scored.append((score, doc["id"], doc["text"]))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    top = [text for _, text in scored[:n_results]]
-    return "\n\n".join(top)
+
+    # Always include pricing in context — it's the most common query
+    top_ids   = [id for _, id, _ in scored[:n_results]]
+    top_texts = [text for _, id, text in scored[:n_results]]
+
+    if "pricing_rules" not in top_ids:
+        pricing = next((d["text"] for d in _kb_documents if d["id"] == "pricing_rules"), None)
+        if pricing:
+            top_texts.append(pricing)
+
+    return "\n\n".join(top_texts)
