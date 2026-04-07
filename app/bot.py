@@ -404,6 +404,16 @@ def is_conversation_closing(text: str) -> bool:
 # ─────────────────────────────────────────
 # CONTACT ACKNOWLEDGEMENT
 # ─────────────────────────────────────────
+
+def is_requesting_callback(text: str) -> bool:
+    phrases = [
+        "have him contact me", "have marc contact me", "ask him to call",
+        "tell him to message", "can he call me", "can marc reach out",
+        "have him call", "have him reach out", "ask marc to contact",
+        "tell marc to reach out", "contact me instead", "reach out to me",
+    ]
+    return any(p in text.lower() for p in phrases)
+
 def maybe_acknowledge_contact(state: dict, actions: dict) -> tuple | None:
     """Fires once when contact info is newly captured, regardless of flow mode."""
     if state["contact"] and not state["contact_followed_up"]:
@@ -433,12 +443,21 @@ def handle_general_inquiry(user_input: str, state: dict, actions: dict) -> tuple
     fn            = first_name(state) or "there"
 
     prompt = f"""
-You are the booking assistant for DJ Marc Edward — a professional open-format DJ
+You are a pro-active booking assistant for DJ Marc Edward — a professional open-format DJ
 based in the Philippines.
+
+- Answer questions about Marc's services, pricing, and availability
+- Collect the user's contact info and pass it along to Marc
+- Reassure users that Marc will follow up once they share their details
 
 Answer the user's question using ONLY the knowledge base below.
 Do not make up details. If the KB doesn't cover it, say so honestly and offer
 to connect them with Marc directly.
+
+You CANNOT actually send messages or make calls on Marc's behalf,
+but you CAN collect contact info and promise that Marc will reach out.
+Never tell the user you "can't arrange contact" — instead ask for
+their number or email and confirm Marc will get it.
 
 Knowledge Base:
 {context}
@@ -489,9 +508,18 @@ def generate_quote(state: dict, actions: dict) -> tuple:
         )
 
     prompt = f"""
-You are the booking assistant for DJ Marc Edward.
+    You are Marc's proactive booking assistant. You can:
+    - Answer questions about Marc's services, pricing, and availability
+    - Collect the user's contact info and pass it along to Marc
+    - Reassure users that Marc will follow up once they share their details
+    - Generate a friendly, conversational price estimate using the details below.
 
-Generate a friendly, conversational price estimate using the details below.
+    You CANNOT actually send messages or make calls on Marc's behalf,
+    but you CAN collect contact info and promise that Marc will reach out.
+    Never tell the user you "can't arrange contact" — instead ask for
+    their number or email and confirm Marc will get it.
+
+
 
 Knowledge Base:
 {context}
@@ -584,6 +612,21 @@ def process_message(user_input: str, state: dict) -> tuple:
             "Yes please! Go ahead and share your number or email "
             "and I'll make sure Marc gets it. 😊"
         )
+        append_history(state, "assistant", msg)
+        return msg, state, actions
+    
+    # 4.6 ── User requesting a callback ──────────────────────────────────────
+    if is_requesting_callback(user_input):
+        if state["contact"]:
+            msg = (
+                f"Got it! I'll let Marc know you'd like him to reach out. "
+                f"He'll contact you at the details you shared. 🎧"
+            )
+        else:
+            msg = (
+                "Of course! Just drop your number or email here "
+                "and I'll make sure Marc gets it and reaches out to you directly. 😊"
+            )
         append_history(state, "assistant", msg)
         return msg, state, actions
     
