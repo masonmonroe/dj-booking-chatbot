@@ -1,5 +1,5 @@
 """
-bot.py — DJ Marc Edward Booking Bot  (v4)
+bot.py — DJ Marc Edward Booking Bot  (v5)
 
 Surfaces : CLI  |  Streamlit  |  FB / IG Webhook
 Switch   : change source= in init_state()
@@ -11,17 +11,23 @@ knowledge_base.txt  →  kb_loader.py  →  ChromaDB
                                               ↓
                         bot.py  ←  retrieve_context()
 
-v4 additions
+v5 additions
 ────────────
-- llm() / llm_json() : single provider call site — swap Gemini → OpenAI here only
-- Conversational memory : last N turns passed to LLM prompts, wiped on session end
-- Time grounding : datetime.now() injected into extraction + date-reasoning prompts
+- Google Forms lead logging via submit_to_google_form()
+- Logging triggered on any closing signal (friendly, neutral, true negative)
+- Minimum data gate: name + (contact | event detail | inquiry topic)
+- is_negative_closing() split into is_price_objection() + is_true_negative_closing()
+- Price objection now triggers a rebuttal → budget negotiation path
+- extract_inquiry_topic() captures 1-2 word topic for general inquiry leads
+- assess_priority() / has_minimum_data() / build_form_payload() / log_lead_if_ready()
+- New state fields: general_inquiry_topic, callback_requested, closing_signal_fired
 """
 
 import os
+import requests
 from google import genai
 from app.kb_loader import load_knowledge_base, retrieve_context
-from datetime import datetime
+from datetime import datetime, date
 import json
 import re
 
@@ -37,6 +43,27 @@ FIELD_LABELS = {
     "location":   "location",
     "date":       "date",
     "duration":   "how long it will be (in hours)",
+}
+
+# ─────────────────────────────────────────
+# GOOGLE FORMS CONFIG
+# ─────────────────────────────────────────
+FORM_SUBMIT_URL = (
+    "https://docs.google.com/forms/d/e/"
+    "1FAIpQLSeP515a9i4JvK-46hwyafxjFdQZQ8zFdg8OFyVgsL7OA10mXQ/formResponse"
+)
+
+FORM_FIELDS = {
+    "name":           "entry.1047519545",
+    "contact":        "entry.1336845746",
+    "event_type":     "entry.266790374",
+    "location":       "entry.83499147",
+    "date":           "entry.94423204",
+    "duration":       "entry.1157902675",
+    "source":         "entry.1299228117",
+    "priority":       "entry.2009726938",
+    "priority_reason":"entry.1434092366",
+    "quote_given":    "entry.301406560",
 }
 
 # ─────────────────────────────────────────
@@ -125,18 +152,22 @@ def init_state(source: str = "cli") -> dict:
             "date":       None,
             "duration":   None,
         },
-        "name":                None,
-        "contact":             None,
-        "booking_intent":      False,
-        "follow_up_mode":      False,
-        "asked_contact":       False,
-        "contact_followed_up": False,
-        "quote_given":         False,
-        "lead_logged":         False,
-        "lead_id":             None,
-        "source":              source,
-        "greeted":             False,
-        "history":             [],     # ← conversational memory, in-session only
+        "name":                  None,
+        "contact":               None,
+        "booking_intent":        False,
+        "follow_up_mode":        False,
+        "asked_contact":         False,
+        "contact_followed_up":   False,
+        "quote_given":           False,
+        "lead_logged":           False,
+        "lead_id":               None,
+        "source":                source,
+        "greeted":               False,
+        "history":               [],     # ← conversational memory, in-session only
+        # v5 additions
+        "general_inquiry_topic": None,   # e.g. "rates", "wedding" — set on general intent
+        "callback_requested":    False,  # flipped when user explicitly asks for callback
+        "closing_signal_fired":  False,  # prevents double-logging
     }
 
 
@@ -280,6 +311,47 @@ Rules:
 
 
 # ─────────────────────────────────────────
+# INQUIRY TOPIC EXTRACTION
+# ─────────────────────────────────────────
+def extract_inquiry_topic(user_input: str, state: dict):
+    """
+    Runs only on general inquiries. Extracts a 1-2 word topic label
+    and stores it in state["general_inquiry_topic"] if not already set.
+
+    Examples: "rates", "wedding", "sound system", "availability", "genres"
+    """
+    if state["general_inquiry_topic"]:
+        return  # already captured, don't overwrite
+
+    history_block = get_history_block(state)
+
+    prompt = f"""
+The user is making a general inquiry (not a booking request).
+Identify the topic they are asking about in 1-2 words.
+
+{history_block}
+
+Latest message:
+{user_input}
+
+Reply with ONLY 1-2 words describing the topic. Examples:
+- "rates"
+- "wedding"
+- "sound system"
+- "availability"
+- "genres"
+- "inclusions"
+
+Do not include punctuation, articles, or explanation.
+"""
+    topic = llm(prompt).strip().lower()
+    # Sanitize: keep only the first 1-2 words, strip punctuation
+    topic = re.sub(r"[^\w\s]", "", topic)
+    words = topic.split()
+    state["general_inquiry_topic"] = " ".join(words[:2]) if words else "general"
+
+
+# ─────────────────────────────────────────
 # NAME NORMALIZATION
 # ─────────────────────────────────────────
 def normalize_name(name: str) -> str:
@@ -356,6 +428,22 @@ def should_ask_contact(state: dict) -> bool:
     )
 
 
+def event_within_30_days(state: dict) -> bool:
+    """
+    Returns True if the event date is within the next 30 days.
+    Handles YYYY-MM-DD strings. Returns False if date is missing or unparseable.
+    """
+    raw = state["lead_info"].get("date")
+    if not raw:
+        return False
+    try:
+        event_date = datetime.strptime(str(raw), "%Y-%m-%d").date()
+        delta = (event_date - date.today()).days
+        return 0 <= delta <= 30
+    except ValueError:
+        return False
+
+
 # ─────────────────────────────────────────
 # SIGNAL DETECTORS
 # ─────────────────────────────────────────
@@ -370,14 +458,31 @@ def is_offering_contact(text: str) -> bool:
     ]
     return any(p in text.lower() for p in phrases)
 
-def is_negative_closing(text: str) -> bool:
+
+def is_price_objection(text: str) -> bool:
+    """
+    User reacting to price — triggers a rebuttal toward budget negotiation.
+    Formerly part of is_negative_closing().
+    """
     phrases = [
-        "too expensive", "not interested", "pass", "maybe next time",
-        "no thanks", "never mind", "not in budget", "too costly",
+        "too expensive", "not in budget", "too costly",
         "out of my price range",
-        "mahal", "masyadong mahal", "di kaya", "hindi kaya",
-        "wala sa budget", "di na lang", "siguro next time",
-        "pass muna", "hindi muna", "next time na lang", "ang mahal po pala",
+        "mahal", "masyadong mahal", "ang mahal po pala",
+        "di kaya", "hindi kaya", "wala sa budget",
+    ]
+    return any(p in text.lower() for p in phrases)
+
+
+def is_true_negative_closing(text: str) -> bool:
+    """
+    User is definitively disengaging — triggers log + close.
+    Formerly part of is_negative_closing().
+    """
+    phrases = [
+        "not interested", "pass", "maybe next time",
+        "no thanks", "never mind",
+        "di na lang", "siguro next time",
+        "pass muna", "hindi muna", "next time na lang",
     ]
     return any(p in text.lower() for p in phrases)
 
@@ -404,7 +509,6 @@ def is_conversation_closing(text: str) -> bool:
 # ─────────────────────────────────────────
 # CONTACT ACKNOWLEDGEMENT
 # ─────────────────────────────────────────
-
 def is_requesting_callback(text: str) -> bool:
     phrases = [
         "have him contact me", "have marc contact me", "ask him to call",
@@ -413,6 +517,7 @@ def is_requesting_callback(text: str) -> bool:
         "tell marc to reach out", "contact me instead", "reach out to me",
     ]
     return any(p in text.lower() for p in phrases)
+
 
 def maybe_acknowledge_contact(state: dict, actions: dict) -> tuple | None:
     """Fires once when contact info is newly captured, regardless of flow mode."""
@@ -430,6 +535,107 @@ def maybe_acknowledge_contact(state: dict, actions: dict) -> tuple | None:
 
 
 # ─────────────────────────────────────────
+# LEAD LOGGING  (Google Forms)
+# ─────────────────────────────────────────
+def has_minimum_data(state: dict) -> bool:
+    """
+    Gate check before logging. Requires at minimum:
+      name + contact, OR
+      name + any event detail, OR
+      name + general inquiry topic
+    Ghost / name-only sessions are skipped.
+    """
+    if not state["name"]:
+        return False
+    has_contact      = bool(state["contact"])
+    has_event_detail = any(v is not None for v in state["lead_info"].values())
+    has_inquiry      = bool(state["general_inquiry_topic"])
+    return has_contact or has_event_detail or has_inquiry
+
+
+def assess_priority(state: dict) -> tuple[str, str]:
+    """
+    Returns (priority_label, reason_string).
+
+    High if:
+      - User explicitly requested a callback, OR
+      - Budget negotiation was triggered, OR
+      - Event is within 30 days AND contact info is available
+
+    Low otherwise (including all general inquiries unless callback requested).
+    """
+    if state["callback_requested"]:
+        return "High", "Callback requested"
+    if state["follow_up_mode"]:
+        return "High", "Budget negotiation"
+    if event_within_30_days(state) and state["contact"]:
+        return "High", "Event within 30 days"
+    return "Low", ""
+
+
+def build_form_payload(state: dict) -> dict:
+    """
+    Maps state to Google Form entry IDs.
+    Repurposes event_type field for general inquiry topic label.
+    """
+    priority, reason = assess_priority(state)
+    duration_str     = normalize_duration(state["lead_info"]["duration"]) or ""
+
+    # For general inquiries, label the event_type field accordingly
+    if state["general_inquiry_topic"] and not state["booking_intent"]:
+        event_type_value = f"General Inquiry - {state['general_inquiry_topic'].title()}"
+    else:
+        event_type_value = state["lead_info"].get("event_type") or ""
+
+    return {
+        FORM_FIELDS["name"]:           state["name"] or "",
+        FORM_FIELDS["contact"]:        state["contact"] or "",
+        FORM_FIELDS["event_type"]:     event_type_value,
+        FORM_FIELDS["location"]:       state["lead_info"].get("location") or "",
+        FORM_FIELDS["date"]:           str(state["lead_info"].get("date") or ""),
+        FORM_FIELDS["duration"]:       duration_str,
+        FORM_FIELDS["source"]:         state["source"],
+        FORM_FIELDS["priority"]:       priority,
+        FORM_FIELDS["priority_reason"]:reason,
+        FORM_FIELDS["quote_given"]:    "yes" if state["quote_given"] else "no",
+    }
+
+
+def submit_to_google_form(payload: dict) -> bool:
+    """
+    POSTs the payload to the linked Google Form.
+    Returns True on success, False on failure.
+    Silently fails — logging should never crash the bot.
+    """
+    try:
+        response = requests.post(FORM_SUBMIT_URL, data=payload, timeout=10)
+        return response.status_code in (200, 302)
+    except Exception as e:
+        print(f"[WARN] Form submission failed: {e}")
+        return False
+
+
+def log_lead_if_ready(state: dict):
+    """
+    Single logging gate. Called at every closing signal.
+    Submits once, prevents double-logging via closing_signal_fired flag.
+    """
+    if state["closing_signal_fired"]:
+        return
+    if not has_minimum_data(state):
+        return
+
+    payload = build_form_payload(state)
+    success = submit_to_google_form(payload)
+    state["closing_signal_fired"] = True
+
+    if success:
+        print("[SYSTEM] Lead logged to Google Forms.\n")
+    else:
+        print("[SYSTEM] Lead logging failed — check form URL or network.\n")
+
+
+# ─────────────────────────────────────────
 # GENERAL INQUIRY  (RAG + memory-aware)
 # ─────────────────────────────────────────
 def handle_general_inquiry(user_input: str, state: dict, actions: dict) -> tuple:
@@ -437,7 +643,10 @@ def handle_general_inquiry(user_input: str, state: dict, actions: dict) -> tuple
     Answers informational questions using retrieved KB context.
     Passes conversation history so follow-up questions resolve correctly.
     Does NOT ask for event details.
+    Captures inquiry topic for logging.
     """
+    extract_inquiry_topic(user_input, state)
+
     context       = retrieve_context(user_input)
     history_block = get_history_block(state)
     fn            = first_name(state) or "there"
@@ -580,17 +789,55 @@ def process_message(user_input: str, state: dict) -> tuple:
     if ack:
         return ack
 
-    # 3 ── Negative closing ───────────────────────────────────────────────────
-    if is_negative_closing(user_input):
+    # 3 ── Price objection → rebuttal (leads into budget negotiation) ─────────
+    if is_price_objection(user_input):
         msg = (
-            "Totally understand — that's completely fair! 😊\n"
-            "Marc can sometimes adjust packages depending on the setup, "
-            "so feel free to reach out anytime if you’d like to revisit this. 🎧"
+            "I totally get it — budget is always a consideration! 😊\n"
+            "Marc can sometimes work with different setups depending on what you need. "
+            "Want to share your budget range and event details? "
+            "I'll flag it to him so he can see what's possible. 🎧"
+        )
+        state["follow_up_mode"] = True
+        append_history(state, "assistant", msg)
+        return msg, state, actions
+
+    # 4 ── True negative closing → log + close ────────────────────────────────
+    if is_true_negative_closing(user_input):
+        log_lead_if_ready(state)
+        msg = (
+            "Totally understand — no worries at all! 😊\n"
+            "Feel free to reach out anytime if you change your mind. "
+            "Marc would love to be part of your event whenever you're ready. 🎧"
         )
         append_history(state, "assistant", msg)
         return msg, state, actions
 
-    # 4 ── Budget negotiation ─────────────────────────────────────────────────
+    # 4.5 ── User offering contact info ──────────────────────────────────────
+    if is_offering_contact(user_input) and not state["contact"]:
+        msg = (
+            "Yes please! Go ahead and share your number or email "
+            "and I'll make sure Marc gets it. 😊"
+        )
+        append_history(state, "assistant", msg)
+        return msg, state, actions
+
+    # 4.6 ── User requesting a callback ──────────────────────────────────────
+    if is_requesting_callback(user_input):
+        state["callback_requested"] = True
+        if state["contact"]:
+            msg = (
+                "Got it! I'll let Marc know you'd like him to reach out. "
+                "He'll contact you at the details you shared. 🎧"
+            )
+        else:
+            msg = (
+                "Of course! Just drop your number or email here "
+                "and I'll make sure Marc gets it and reaches out to you directly. 😊"
+            )
+        append_history(state, "assistant", msg)
+        return msg, state, actions
+
+    # 4.7 ── Budget negotiation ───────────────────────────────────────────────
     if is_budget_negotiation(user_input):
         state["follow_up_mode"] = True
         if not state["contact"] and state["source"] not in ("fb", "ig"):
@@ -606,32 +853,8 @@ def process_message(user_input: str, state: dict) -> tuple:
             )
         append_history(state, "assistant", msg)
         return msg, state, actions
-    
-    # 4.5 ── User offering contact info ──────────────────────────────────────
-    if is_offering_contact(user_input) and not state["contact"]:
-        msg = (
-            "Yes please! Go ahead and share your number or email "
-            "and I'll make sure Marc gets it. 😊"
-        )
-        append_history(state, "assistant", msg)
-        return msg, state, actions
-    
-    # 4.6 ── User requesting a callback ──────────────────────────────────────
-    if is_requesting_callback(user_input):
-        if state["contact"]:
-            msg = (
-                f"Got it! I'll let Marc know you'd like him to reach out. "
-                f"He'll contact you at the details you shared. 🎧"
-            )
-        else:
-            msg = (
-                "Of course! Just drop your number or email here "
-                "and I'll make sure Marc gets it and reaches out to you directly. 😊"
-            )
-        append_history(state, "assistant", msg)
-        return msg, state, actions
-    
-    # 5 ── Skip classification if we don't have a name yet ───────────────────────
+
+    # 5 ── Skip classification if we don't have a name yet ───────────────────
     if not state["name"]:
         msg = (
             "I'd love to help! Before anything else — what's your name? 😊"
@@ -712,10 +935,12 @@ def handle_closing(user_input: str, state: dict, actions: dict) -> tuple | None:
     """
     Call this before process_message once a quote has been given.
     Keeps closing detection out of the main flow so it can't fire mid-conversation.
+    Logs the lead on any friendly or neutral closing signal.
     Returns a tuple or None.
     """
     if state["quote_given"] and is_conversation_closing(user_input):
         append_history(state, "user", user_input)
+        log_lead_if_ready(state)
         msg = (
             "No worries! We'll get back to you within 24 hours.\n"
             "Have a great day! 🎧"
@@ -725,6 +950,18 @@ def handle_closing(user_input: str, state: dict, actions: dict) -> tuple | None:
         )
         append_history(state, "assistant", msg)
         return msg, state, actions
+
+    # Also catch friendly closing before a quote is given (general inquiry path)
+    if not state["quote_given"] and is_conversation_closing(user_input):
+        append_history(state, "user", user_input)
+        log_lead_if_ready(state)
+        msg = (
+            "Thanks for reaching out! Feel free to come back anytime "
+            "if you have more questions or want to get a quote. 🎧"
+        )
+        append_history(state, "assistant", msg)
+        return msg, state, actions
+
     return None
 
 
@@ -776,10 +1013,6 @@ def chat_cli():
             response = format_for_webhook(response)
 
         print(f"\nBot:\n{response}\n")
-
-        if actions.get("log_lead") and not state["lead_logged"]:
-            state["lead_logged"] = True
-            print("[SYSTEM] Lead logged.\n")
 
 
 def get_bot_response(user_input: str, state: dict) -> tuple:
