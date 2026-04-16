@@ -37,6 +37,8 @@ v4.1 additions
 """
 
 import os
+from dotenv import load_dotenv
+load_dotenv()
 from google import genai
 from app.kb_loader import load_knowledge_base, retrieve_context
 from datetime import datetime
