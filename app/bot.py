@@ -1,5 +1,5 @@
 """
-bot.py — DJ Marc Edward Booking Bot  (v4.1)
+bot.py — DJ Marc Edward Booking Bot  (v5.2)
 
 Surfaces : CLI  |  Streamlit  |  FB / IG Webhook
 Switch   : change source= in init_state()
@@ -13,44 +13,79 @@ knowledge_base.txt  →  kb_loader.py  →  ChromaDB
 
 v4 additions
 ────────────
-- llm() / llm_json() : single provider call site — swap Gemini → OpenAI here only
-- Conversational memory : last N turns passed to LLM prompts, wiped on session end
-- Time grounding : datetime.now() injected into extraction + date-reasoning prompts
+- llm() / llm_json() : single provider call site
+- Conversational memory : last N turns passed to LLM prompts
+- Time grounding : datetime.now() injected into prompts
 
 v4.1 additions
 ────────────
-- startup_check() : runs before greeting — silent on success, error message on failure
-- Error code system — all errors surface to user as friendly messages with codes:
-    SRV-001  API key missing or empty
-    SRV-002  Knowledge base file unreadable
-    SRV-003  Knowledge base retrieval returns empty
+- startup_check() : silent on success, error message on failure
+- Error codes:
+    SRV-001  API key missing
+    SRV-002  KB file unreadable
+    SRV-003  KB retrieval empty
     SRV-004  LLM unreachable at startup
-    KB-001   retrieve_context() returns empty mid-conversation
-    LLM-001  llm() throws an exception
-    LLM-002  llm() returns empty response
+    KB-001   retrieve_context() empty mid-conversation
+    LLM-001  llm() exception
+    LLM-002  llm() empty response
     LLM-003  Rate limit / quota exceeded
-    PAR-001  llm_json() fails to parse JSON
-    EXT-001  extract_info() returns nothing (name not captured after user provides it)
-- is_negative_closing() split into:
-    is_price_objection()       → rebuttal leading into budget negotiation
-    is_true_negative_closing() → close conversation
+    PAR-001  llm_json() parse failure
+    EXT-001  extract_info() returns nothing, name not captured
+- is_price_objection()       → rebuttal → budget negotiation
+- is_true_negative_closing() → log + close
+
+v5 additions
+────────────
+- Google Forms lead logging
+- State: general_inquiry_topic, callback_requested, closing_signal_fired
+- extract_inquiry_topic(), has_minimum_data(), assess_priority()
+- build_form_payload(), submit_to_google_form(), log_lead_if_ready()
+- callback_requested flag in block 4.6 (priority signal only)
+- log_lead_if_ready() called on all closing signals + quote_generated
+
+v5.1 additions
+────────────
+- Session ID : uuid4, generated once per init_state()
+- Fingerprint : MD5 hash of name+contact+date+location+inquiry_topic
+- Event Stage : "quote_generated" | "closing_signal" | "true_negative"
+- Retry logic : 3x exponential backoff on form submission
+- Error log form : FORM-001 failures POST to separate error log sheet
+    FORM-001  Lead form failed after 3 retries
+    FORM-002  Error log submission failed (silent)
+
+v5.2 fixes
+────────────
+- BUG FIX: maybe_acknowledge_contact() was consuming the turn where the quote
+  should fire. Fixed by checking for complete booking fields after acknowledgement
+  and proceeding to quote generation in the same turn.
+- Quote now has two variants depending on whether contact was already given:
+    Version A (contact given)    : quote + DJ contact info
+    Version B (contact not given): quote + soft contact ask +
+                                   "or you can reach them directly at:" + DJ info
+  The soft ask in Version B fires once and is never repeated.
+- FORM-001 console message now uses err() format for consistency.
+- State field added: post_quote_contact_asked — prevents repeat of Version B ask.
 """
 
 import os
-from dotenv import load_dotenv
-load_dotenv()
-from google import genai
-from app.kb_loader import load_knowledge_base, retrieve_context
-from datetime import datetime
 import json
 import re
+import time
+import uuid
+import hashlib
+import requests
+from google import genai
+from app.kb_loader import load_knowledge_base, retrieve_context
+from datetime import datetime, date
+from dotenv import load_dotenv
+load_dotenv()
 
 # ─────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────
 API_KEY      = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-2.5-flash"
-MEMORY_WINDOW = 20   # number of turns (user + assistant) kept in context
+MEMORY_WINDOW = 20
 
 FIELD_LABELS = {
     "event_type": "event type",
@@ -60,12 +95,53 @@ FIELD_LABELS = {
 }
 
 # ─────────────────────────────────────────
+# GOOGLE FORMS CONFIG — LEADS
+# ─────────────────────────────────────────
+LEADS_FORM_URL = (
+    "https://docs.google.com/forms/d/e/"
+    "1FAIpQLSeP515a9i4JvK-46hwyafxjFdQZQ8zFdg8OFyVgsL7OA10mXQ/formResponse"
+)
+
+LEADS_FIELDS = {
+    "name":            "entry.1047519545",
+    "contact":         "entry.1336845746",
+    "event_type":      "entry.266790374",
+    "location":        "entry.83499147",
+    "date":            "entry.94423204",
+    "duration":        "entry.1157902675",
+    "source":          "entry.1299228117",
+    "priority":        "entry.2009726938",
+    "priority_reason": "entry.1434092366",
+    "quote_given":     "entry.301406560",
+    "session_id":      "entry.698878608",
+    "fingerprint":     "entry.482294119",
+    "event_stage":     "entry.1866349441",
+}
+
+# ─────────────────────────────────────────
+# GOOGLE FORMS CONFIG — ERROR LOG
+# ─────────────────────────────────────────
+ERROR_LOG_FORM_URL = (
+    "https://docs.google.com/forms/d/e/"
+    "1FAIpQLScMDrIxAG4b7x1YOyJyKlv-0ot-csrjcezH6AysJRKNBezdKA/formResponse"
+)
+
+ERROR_LOG_FIELDS = {
+    "error_code": "entry.1768426929",
+    "session_id": "entry.1928280094",
+    "payload":    "entry.1492833363",
+    "context":    "entry.466659492",
+}
+
+FORM_MAX_RETRIES = 3
+FORM_RETRY_DELAY = 2   # seconds — doubles each retry (2s → 4s → 8s)
+
+# ─────────────────────────────────────────
 # ERROR HELPER
 # ─────────────────────────────────────────
 ERR_MSG = "Oops, something went wrong on our end! 😅"
 
 def err(code: str) -> str:
-    """Returns the standard user-facing error string for a given code."""
     return f"{ERR_MSG} [{code}]"
 
 
@@ -76,33 +152,27 @@ _gemini = genai.Client(api_key=API_KEY)
 
 
 # ─────────────────────────────────────────
-# LLM WRAPPERS  ← only place to touch when switching providers
+# LLM WRAPPERS
 # ─────────────────────────────────────────
 def llm(prompt: str) -> str:
     """
-    Plain-text LLM call. All conversational responses go through here.
-    Raises RuntimeError with the appropriate error code on failure.
+    Plain-text LLM call. Raises RuntimeError with error code on failure.
 
-    To switch to OpenAI, replace the body with:
+    To switch to OpenAI:
         from openai import OpenAI
         _oa = OpenAI(api_key=OPENAI_API_KEY)
-        r   = _oa.chat.completions.create(
-                  model="gpt-4o",
-                  messages=[{"role": "user", "content": prompt}]
-              )
+        r = _oa.chat.completions.create(model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}])
         return r.choices[0].message.content.strip()
     """
     try:
-        response = _gemini.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-        )
+        response = _gemini.models.generate_content(model=GEMINI_MODEL, contents=prompt)
         text = response.text.strip()
         if not text:
             raise RuntimeError("LLM-002")
         return text
     except RuntimeError:
-        raise  # already coded, pass it up
+        raise
     except Exception as e:
         e_str = str(e)
         if "429" in e_str or "quota" in e_str.lower() or "rate" in e_str.lower():
@@ -112,27 +182,23 @@ def llm(prompt: str) -> str:
 
 def llm_json(prompt: str) -> dict | None:
     """
-    JSON-mode LLM call. Fence-cleaning happens once, here.
-    Returns a parsed dict or None on failure — callers never see raw text.
-    PAR-001 is logged to console; None signals caller to handle gracefully.
+    JSON-mode LLM call. Returns parsed dict or None on failure.
 
-    To switch to OpenAI structured output, replace the body with:
+    To switch to OpenAI structured output:
         from pydantic import BaseModel
         class Extraction(BaseModel):
             name: str | None
             contact: str | None
             ...
-        r = _oa.beta.chat.completions.parse(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                response_format=Extraction
-            )
+        r = _oa.beta.chat.completions.parse(model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            response_format=Extraction)
         return r.choices[0].message.parsed.model_dump()
     """
     try:
         raw = llm(prompt)
     except RuntimeError:
-        return None  # llm() already coded; caller checks for None
+        return None
 
     raw = re.sub(r"```json|```", "", raw).strip()
     try:
@@ -147,27 +213,20 @@ def llm_json(prompt: str) -> dict | None:
 # ─────────────────────────────────────────
 def startup_check() -> str | None:
     """
-    Runs once at startup before the greeting is shown.
-    Returns None on full success (silent).
-    Returns a user-facing error string on any failure.
-
-    Checks in order:
-        SRV-001 — API key present
-        SRV-002 — KB file loads
-        SRV-003 — KB retrieval returns content
-        SRV-004 — LLM responds to a test ping
+    Runs once before greeting. Silent on success, returns error string on failure.
+    SRV-001 API key present
+    SRV-002 KB file loads
+    SRV-003 KB retrieval returns content
+    SRV-004 LLM responds to test ping
     """
-    # SRV-001 — API key
     if not API_KEY:
         return err("SRV-001")
 
-    # SRV-002 — KB loads
     try:
         load_knowledge_base()
     except Exception:
         return err("SRV-002")
 
-    # SRV-003 — KB retrieval
     try:
         context = retrieve_context("DJ Marc Edward services pricing")
         if not context or not context.strip():
@@ -175,25 +234,19 @@ def startup_check() -> str | None:
     except Exception:
         return err("SRV-003")
 
-    # SRV-004 — LLM reachable
     try:
         llm("Respond with only the word: OK")
     except RuntimeError as e:
         print(f"[SRV-004] LLM check failed with: {e}")
         return err("SRV-004")
 
-    return None  # all checks passed — silent
+    return None
 
 
 # ─────────────────────────────────────────
 # TIME GROUNDING
 # ─────────────────────────────────────────
 def current_datetime_context() -> str:
-    """
-    Readable timestamp injected into prompts that reason about dates.
-    Lets the LLM resolve 'next Friday', 'this weekend', 'end of the month', etc.
-    Example output: "Today is Saturday, April 05, 2026."
-    """
     return datetime.now().strftime("Today is %A, %B %d, %Y.")
 
 
@@ -203,11 +256,9 @@ def current_datetime_context() -> str:
 def init_state(source: str = "cli") -> dict:
     """
     source: "cli" | "streamlit" | "fb" | "ig"
-    FB/IG skips the contact-ask — we're already in the same thread.
-
-    history : list of {"role": "user"|"assistant", "content": str}
-              Grows during the session. Never persisted — wiped automatically
-              when init_state() is called again (session end / restart).
+    FB/IG skips the contact-ask — already in the same thread.
+    history: grows in-session, never persisted.
+    session_id: unique per conversation.
     """
     return {
         "lead_info": {
@@ -216,18 +267,28 @@ def init_state(source: str = "cli") -> dict:
             "date":       None,
             "duration":   None,
         },
-        "name":                None,
-        "contact":             None,
-        "booking_intent":      False,
-        "follow_up_mode":      False,
-        "asked_contact":       False,
-        "contact_followed_up": False,
-        "quote_given":         False,
-        "lead_logged":         False,
-        "lead_id":             None,
-        "source":              source,
-        "greeted":             False,
-        "history":             [],     # ← conversational memory, in-session only
+        "name":                    None,
+        "contact":                 None,
+        "booking_intent":          False,
+        "follow_up_mode":          False,
+        "asked_contact":           False,
+        "contact_followed_up":     False,
+        "quote_given":             False,
+        "lead_logged":             False,
+        "lead_id":                 None,
+        "source":                  source,
+        "greeted":                 False,
+        "history":                 [],
+        # v5 additions
+        "general_inquiry_topic":   None,
+        "callback_requested":      False,
+        "closing_signal_fired":    False,
+        # v5.1 additions
+        "session_id":              str(uuid.uuid4()),
+        "fingerprint":             None,
+        "quote_stage_logged":      False,
+        # v5.2 additions
+        "post_quote_contact_asked": False,  # prevents repeat of Version B soft ask
     }
 
 
@@ -235,20 +296,10 @@ def init_state(source: str = "cli") -> dict:
 # MEMORY HELPERS
 # ─────────────────────────────────────────
 def append_history(state: dict, role: str, content: str):
-    """Appends one turn. role must be 'user' or 'assistant'."""
     state["history"].append({"role": role, "content": content})
 
 
 def get_history_block(state: dict) -> str:
-    """
-    Returns the last MEMORY_WINDOW turns as a readable block for prompt injection.
-
-    Example:
-        [Conversation so far]
-        User      : I'm Ana, looking for a DJ for my wedding.
-        Assistant : Got it, Ana! Can you share the location and date?
-        User      : It's at The Ruins in Bacolod, June 14.
-    """
     turns = state["history"][-MEMORY_WINDOW:]
     if not turns:
         return ""
@@ -263,12 +314,6 @@ def get_history_block(state: dict) -> str:
 # GREETING
 # ─────────────────────────────────────────
 def get_greeting(state: dict) -> str:
-    """
-    Bot always speaks first — identical across all surfaces.
-    CLI and Streamlit call this before the first user turn.
-    FB/IG: send this as the reply to the user's very first message.
-    Only called after startup_check() returns None (success).
-    """
     greeting = (
         "Hey there! 👋 I'm DJ Marc Edward's booking assistant.\n"
         "I can help you check availability, talk through music choices, "
@@ -283,10 +328,6 @@ def get_greeting(state: dict) -> str:
 # INTENT CLASSIFICATION
 # ─────────────────────────────────────────
 def classify_intent(user_input: str) -> str:
-    """
-    LLM classifier — returns "general" or "booking".
-    Returns "general" as safe fallback on LLM error.
-    """
     prompt = f"""
 Classify the user's message into exactly one of two categories:
 
@@ -303,7 +344,7 @@ Message: {user_input}
         result = llm(prompt).lower()
         return "general" if "general" in result else "booking"
     except RuntimeError:
-        return "general"  # safe fallback — don't crash mid-conversation
+        return "general"
 
 
 # ─────────────────────────────────────────
@@ -311,17 +352,8 @@ Message: {user_input}
 # ─────────────────────────────────────────
 def extract_info(user_input: str, state: dict) -> bool:
     """
-    Extracts structured fields from the latest message and updates state in-place.
-    Handles English, Tagalog, Taglish.
-
-    Returns True if at least one field was extracted, False otherwise.
-    Caller uses False to detect EXT-001 conditions (name never captured).
-
-    Time-grounded: today's date is injected so relative expressions like
-    "next Friday" or "sa Sabado" resolve to real calendar dates.
-
-    Memory-aware: recent turns are passed so references like "same venue"
-    or "the one I mentioned" resolve correctly.
+    Returns True if at least one field extracted, False on total failure.
+    Caller uses False + no name to surface EXT-001.
     """
     history_block = get_history_block(state)
     date_context  = current_datetime_context()
@@ -352,8 +384,7 @@ Return ONLY valid JSON (no markdown fences, no explanation):
 
 Rules:
 - Normalize all values to English
-- Extract name if the user introduces themselves
-  (e.g. "I'm Ana", "si Ana po ako")
+- Extract name if the user introduces themselves (e.g. "I'm Ana", "si Ana po ako")
 - Extract contact if a phone number or email is mentioned
 - Resolve relative dates using today's date above
 - Convert duration to a numeric average of hours:
@@ -365,10 +396,9 @@ Rules:
 """
     data = llm_json(prompt)
     if not data:
-        return False  # PAR-001 already logged inside llm_json
+        return False
 
     extracted_any = False
-
     for key in state["lead_info"]:
         if data.get(key) is not None:
             state["lead_info"][key] = data[key]
@@ -384,19 +414,42 @@ Rules:
 
 
 # ─────────────────────────────────────────
+# INQUIRY TOPIC EXTRACTION
+# ─────────────────────────────────────────
+def extract_inquiry_topic(user_input: str, state: dict):
+    """
+    Runs only on general inquiries. Silent on failure — best-effort.
+    Stores 1-2 word topic in state["general_inquiry_topic"] if not set.
+    """
+    if state["general_inquiry_topic"]:
+        return
+
+    history_block = get_history_block(state)
+    prompt = f"""
+The user is making a general inquiry (not a booking request).
+Identify the topic they are asking about in 1-2 words.
+
+{history_block}
+
+Latest message:
+{user_input}
+
+Reply with ONLY 1-2 words. Examples: rates, wedding, sound system, availability, genres.
+No punctuation, articles, or explanation.
+"""
+    try:
+        topic = llm(prompt).strip().lower()
+        topic = re.sub(r"[^\w\s]", "", topic)
+        words = topic.split()
+        state["general_inquiry_topic"] = " ".join(words[:2]) if words else "general"
+    except RuntimeError:
+        state["general_inquiry_topic"] = "general"
+
+
+# ─────────────────────────────────────────
 # NAME NORMALIZATION
 # ─────────────────────────────────────────
 def normalize_name(name: str) -> str:
-    """
-    Capitalizes each word in a name regardless of how the user typed it.
-    Handles standard names, hyphenated names, and particles.
-
-    Examples:
-        "ana"            → "Ana"
-        "JOHN DOE"       → "John Doe"
-        "mary-jane"      → "Mary-Jane"
-        "juan dela cruz" → "Juan Dela Cruz"
-    """
     return " ".join(
         "-".join(part.capitalize() for part in word.split("-"))
         for word in name.strip().split()
@@ -411,7 +464,6 @@ def get_missing_fields(state: dict) -> list:
 
 
 def format_missing_labels(labels: list) -> str:
-    """Oxford-comma list ending with 'and'."""
     if len(labels) == 1:
         return labels[0]
     if len(labels) == 2:
@@ -450,7 +502,10 @@ def first_name(state: dict) -> str | None:
 
 
 def should_ask_contact(state: dict) -> bool:
-    """Only ask on CLI / Streamlit. On FB/IG we're already in the same thread."""
+    """
+    Pre-quote contact ask. CLI/Streamlit only, once only.
+    Not used on FB/IG — already in the same thread.
+    """
     if state["source"] in ("fb", "ig"):
         return False
     return (
@@ -458,6 +513,18 @@ def should_ask_contact(state: dict) -> bool:
         and not state["contact"]
         and not state["asked_contact"]
     )
+
+
+def event_within_30_days(state: dict) -> bool:
+    raw = state["lead_info"].get("date")
+    if not raw:
+        return False
+    try:
+        event_date = datetime.strptime(str(raw), "%Y-%m-%d").date()
+        delta = (event_date - date.today()).days
+        return 0 <= delta <= 30
+    except ValueError:
+        return False
 
 
 # ─────────────────────────────────────────
@@ -476,10 +543,7 @@ def is_offering_contact(text: str) -> bool:
 
 
 def is_price_objection(text: str) -> bool:
-    """
-    User reacting negatively to price — triggers a rebuttal toward
-    budget negotiation rather than immediately closing the conversation.
-    """
+    """Triggers rebuttal leading into budget negotiation."""
     phrases = [
         "too expensive", "not in budget", "too costly",
         "out of my price range",
@@ -490,10 +554,7 @@ def is_price_objection(text: str) -> bool:
 
 
 def is_true_negative_closing(text: str) -> bool:
-    """
-    User is definitively disengaging — close the conversation.
-    Does NOT include price objections, which get a rebuttal instead.
-    """
+    """Triggers log + close. Price objections excluded."""
     phrases = [
         "not interested", "pass", "maybe next time",
         "no thanks", "never mind",
@@ -535,30 +596,184 @@ def is_requesting_callback(text: str) -> bool:
     return any(p in text.lower() for p in phrases)
 
 
-def maybe_acknowledge_contact(state: dict, actions: dict) -> tuple | None:
-    """Fires once when contact info is newly captured, regardless of flow mode."""
+def maybe_acknowledge_contact(state: dict, actions: dict) -> str | None:
+    """
+    Returns an acknowledgement string if contact was just captured, None otherwise.
+    Does NOT return a full tuple — caller decides whether to append this to another
+    response or return it standalone, fixing the quote-skip bug.
+    """
     if state["contact"] and not state["contact_followed_up"]:
         state["contact_followed_up"] = True
         fn  = first_name(state)
         tag = f", {fn}" if fn else ""
-        msg = (
+        return (
             f"Got it{tag}! I've noted your contact info. "
-            "Marc or his team will be in touch with you directly 🎧"
+            "Marc or his team will be in touch with you directly 🎧\n\n"
         )
-        append_history(state, "assistant", msg)
-        return msg, state, actions
     return None
+
+
+# ─────────────────────────────────────────
+# FINGERPRINT
+# ─────────────────────────────────────────
+def generate_fingerprint(state: dict) -> str:
+    """
+    MD5 hash of key identifying fields.
+    Same person across sessions produces same fingerprint — enables deduplication
+    via conditional formatting in Google Sheets.
+    Includes inquiry topic so general-only leads don't all hash identically.
+    """
+    raw = (
+        f"{state.get('name')}"
+        f"{state.get('contact')}"
+        f"{state['lead_info'].get('date')}"
+        f"{state['lead_info'].get('location')}"
+        f"{state.get('general_inquiry_topic')}"
+    )
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+# ─────────────────────────────────────────
+# LEAD LOGGING  (Google Forms)
+# ─────────────────────────────────────────
+def has_minimum_data(state: dict) -> bool:
+    """name + at least one of (contact | event detail | inquiry topic)."""
+    if not state["name"]:
+        return False
+    return (
+        bool(state["contact"])
+        or any(v is not None for v in state["lead_info"].values())
+        or bool(state["general_inquiry_topic"])
+    )
+
+
+def assess_priority(state: dict) -> tuple:
+    """
+    Returns (priority_label, reason_string).
+    High: callback requested | budget negotiation | event within 30 days + contact.
+    """
+    if state["callback_requested"]:
+        return "High", "Callback requested"
+    if state["follow_up_mode"]:
+        return "High", "Budget negotiation"
+    if event_within_30_days(state) and state["contact"]:
+        return "High", "Event within 30 days"
+    return "Low", ""
+
+
+def build_form_payload(state: dict, event_stage: str) -> dict:
+    """
+    Maps state to Google Form entry IDs.
+    Repurposes event_type for general inquiry label when no booking intent.
+    Generates and caches fingerprint on first call.
+    """
+    if not state["fingerprint"]:
+        state["fingerprint"] = generate_fingerprint(state)
+
+    priority, reason = assess_priority(state)
+    duration_str     = normalize_duration(state["lead_info"]["duration"]) or ""
+
+    if state["general_inquiry_topic"] and not state["booking_intent"]:
+        event_type_value = f"General Inquiry - {state['general_inquiry_topic'].title()}"
+    else:
+        event_type_value = state["lead_info"].get("event_type") or ""
+
+    return {
+        LEADS_FIELDS["name"]:            state["name"] or "",
+        LEADS_FIELDS["contact"]:         state["contact"] or "",
+        LEADS_FIELDS["event_type"]:      event_type_value,
+        LEADS_FIELDS["location"]:        state["lead_info"].get("location") or "",
+        LEADS_FIELDS["date"]:            str(state["lead_info"].get("date") or ""),
+        LEADS_FIELDS["duration"]:        duration_str,
+        LEADS_FIELDS["source"]:          state["source"],
+        LEADS_FIELDS["priority"]:        priority,
+        LEADS_FIELDS["priority_reason"]: reason,
+        LEADS_FIELDS["quote_given"]:     "yes" if state["quote_given"] else "no",
+        LEADS_FIELDS["session_id"]:      state["session_id"],
+        LEADS_FIELDS["fingerprint"]:     state["fingerprint"],
+        LEADS_FIELDS["event_stage"]:     event_stage,
+    }
+
+
+def log_error_to_form(error_code: str, session_id: str, payload: dict, context: str):
+    """
+    Posts failed lead payload to error log form.
+    Full payload included — private sheet, contact info visible by design.
+    Silent on its own failure (FORM-002) — can't log the logger.
+    """
+    try:
+        error_payload = {
+            ERROR_LOG_FIELDS["error_code"]: error_code,
+            ERROR_LOG_FIELDS["session_id"]: session_id,
+            ERROR_LOG_FIELDS["payload"]:    json.dumps(payload, ensure_ascii=False),
+            ERROR_LOG_FIELDS["context"]:    context,
+        }
+        requests.post(ERROR_LOG_FORM_URL, data=error_payload, timeout=10)
+    except Exception as e:
+        print(f"[FORM-002] Error log submission failed: {e}")
+
+
+def submit_to_google_form(payload: dict, state: dict, context: str) -> bool:
+    """
+    POSTs to leads form with exponential backoff retry (max 3 attempts: 2s→4s→8s).
+    On total failure: surfaces err("FORM-001") to console and logs to error sheet.
+    """
+    delay = FORM_RETRY_DELAY
+    for attempt in range(1, FORM_MAX_RETRIES + 1):
+        try:
+            response = requests.post(LEADS_FORM_URL, data=payload, timeout=10)
+            if response.status_code in (200, 302):
+                return True
+        except Exception as e:
+            print(f"[WARN] Form attempt {attempt}/{FORM_MAX_RETRIES} failed: {e}")
+
+        if attempt < FORM_MAX_RETRIES:
+            time.sleep(delay)
+            delay *= 2
+
+    # All retries exhausted
+    print(err("FORM-001"))
+    log_error_to_form(
+        error_code="FORM-001",
+        session_id=state["session_id"],
+        payload=payload,
+        context=context,
+    )
+    return False
+
+
+def log_lead(state: dict, event_stage: str):
+    """
+    Builds payload and submits for a specific event stage.
+    Each stage logs independently — fingerprint ties rows together in the sheet.
+    """
+    if not has_minimum_data(state):
+        return
+    payload = build_form_payload(state, event_stage)
+    success = submit_to_google_form(payload, state, context=f"stage={event_stage}")
+    if success:
+        print(f"[SYSTEM] Lead logged — stage: {event_stage}")
+
+
+def log_lead_if_ready(state: dict, event_stage: str):
+    """
+    Gate for closing-signal stages only (closing_signal, true_negative).
+    Prevents double-logging via closing_signal_fired flag.
+    quote_generated bypasses this gate — handled directly in generate_quote().
+    """
+    if state["closing_signal_fired"]:
+        return
+    state["closing_signal_fired"] = True
+    log_lead(state, event_stage)
 
 
 # ─────────────────────────────────────────
 # GENERAL INQUIRY  (RAG + memory-aware)
 # ─────────────────────────────────────────
 def handle_general_inquiry(user_input: str, state: dict, actions: dict) -> tuple:
-    """
-    Answers informational questions using retrieved KB context.
-    Passes conversation history so follow-up questions resolve correctly.
-    Does NOT ask for event details.
-    """
+    """KB-backed answer. Captures inquiry topic for logging. No event-detail asks."""
+    extract_inquiry_topic(user_input, state)
+
     try:
         context = retrieve_context(user_input)
         if not context or not context.strip():
@@ -585,7 +800,7 @@ to connect them with Marc directly.
 You CANNOT actually send messages or make calls on Marc's behalf,
 but you CAN collect contact info and promise that Marc will reach out.
 Never tell the user you "can't arrange contact" — instead ask for
-their number or email and confirm Marc will get it. 
+their number or email and confirm Marc will get it.
 
 Knowledge Base:
 {context}
@@ -614,11 +829,18 @@ Guidelines:
 # ─────────────────────────────────────────
 # QUOTE GENERATION  (memory-aware)
 # ─────────────────────────────────────────
-def generate_quote(state: dict, actions: dict) -> tuple:
+def generate_quote(state: dict, actions: dict, contact_ack: str = "") -> tuple:
     """
-    Called when all four lead fields are present.
-    Produces a conversational price estimate with surface-appropriate CTA.
-    References conversation history naturally (e.g. vibe, guest count mentioned earlier).
+    All four lead fields present. Logs quote_generated stage immediately.
+
+    contact_ack: optional acknowledgement string prepended to the response.
+                 Passed in when contact was just captured in the same turn.
+
+    Two CTA variants:
+      Version A — contact already given: quote + DJ contact info
+      Version B — contact not yet given: quote + soft contact ask +
+                  "or you can reach them directly at:" + DJ info
+    Version B fires once only (post_quote_contact_asked flag).
     """
     duration_str = normalize_duration(state["lead_info"]["duration"])
 
@@ -632,14 +854,29 @@ def generate_quote(state: dict, actions: dict) -> tuple:
     history_block = get_history_block(state)
     fn            = first_name(state) or "there"
 
+    # ── Build CTA based on whether contact is available ──────────────────────
     if state["source"] in ("fb", "ig"):
+        # FB/IG: always has contact via thread — single variant
         cta = (
             "You can confirm the booking right here in this chat, "
             "or reach Marc at djmarcedward@gmail.com or +639283518077."
         )
-    else:
+    elif state["contact"] or state["post_quote_contact_asked"]:
+        # Version A: contact given, or soft ask already made — DJ info only
         cta = (
             "To lock this in, reach Marc directly:\n"
+            "📧 djmarcedward@gmail.com\n"
+            "📱 +639283518077\n"
+            "📘 facebook.com/djmarcedward\n"
+            "📸 IG: @djmarcedward"
+        )
+    else:
+        # Version B: no contact yet, first time asking post-quote
+        state["post_quote_contact_asked"] = True
+        cta = (
+            "If you'd like Marc to follow up directly, feel free to drop your "
+            "number or email here 😊\n\n"
+            "Or you can reach him directly at:\n"
             "📧 djmarcedward@gmail.com\n"
             "📱 +639283518077\n"
             "📘 facebook.com/djmarcedward\n"
@@ -656,7 +893,7 @@ You can:
 You CANNOT actually send messages or make calls on Marc's behalf,
 but you CAN collect contact info and promise that Marc will reach out.
 Never tell the user you "can't arrange contact" — instead ask for
-their number or email and confirm Marc will get it. Do not mention 
+their number or email and confirm Marc will get it. Do not mention
 "pro-active" or "proactive" in any of your responses.
 
 Generate a friendly, conversational price estimate using the details below.
@@ -691,7 +928,17 @@ Instructions:
     state["quote_given"] = True
     actions["log_lead"]  = True
 
+    # Prepend contact acknowledgement if contact was captured this same turn
+    if contact_ack:
+        response = contact_ack + response
+
     append_history(state, "assistant", response)
+
+    # Log immediately — catches users who ghost after receiving quote
+    if not state["quote_stage_logged"]:
+        state["quote_stage_logged"] = True
+        log_lead(state, event_stage="quote_generated")
+
     return response, state, actions
 
 
@@ -708,15 +955,12 @@ def process_message(user_input: str, state: dict) -> tuple:
     # 0 ── Safety net: greeting not yet sent ─────────────────────────────────
     if not state["greeted"]:
         state["greeted"] = True
-        return get_greeting(state), state, actions   # appends to history internally
+        return get_greeting(state), state, actions
 
     # ── Log user turn to memory ───────────────────────────────────────────────
     append_history(state, "user", user_input)
 
-    # 1 ── Extract structured info (time-grounded, memory-aware) ─────────────
-    #      Returns False if LLM/parse failed entirely.
-    #      Only surface EXT-001 if name is still missing — a failed extraction
-    #      on a message like "thanks" is harmless and shouldn't error.
+    # 1 ── Extract structured info ────────────────────────────────────────────
     extracted = extract_info(user_input, state)
     if not extracted and not state["name"]:
         msg = err("EXT-001")
@@ -724,11 +968,24 @@ def process_message(user_input: str, state: dict) -> tuple:
         return msg, state, actions
 
     # 2 ── Acknowledge newly captured contact ─────────────────────────────────
-    ack = maybe_acknowledge_contact(state, actions)
-    if ack:
-        return ack
+    #      Returns a string (or None) — does NOT return early anymore.
+    #      If we're on the booking path with all fields present, the ack is
+    #      prepended to the quote instead of being sent as a standalone message.
+    contact_ack = maybe_acknowledge_contact(state, actions)
 
-    # 3 ── Price objection → rebuttal (opens door to budget negotiation) ──────
+    # 2a ── If contact was just captured AND all booking fields are present,
+    #       skip straight to quote generation with the ack prepended.
+    #       This fixes the bug where the contact turn consumed the quote turn.
+    if contact_ack and state["booking_intent"] and not get_missing_fields(state):
+        return generate_quote(state, actions, contact_ack=contact_ack)
+
+    # 2b ── Otherwise send the ack as a standalone message if applicable
+    if contact_ack:
+        msg = contact_ack.strip()
+        append_history(state, "assistant", msg)
+        return msg, state, actions
+
+    # 3 ── Price objection → rebuttal ─────────────────────────────────────────
     if is_price_objection(user_input):
         state["follow_up_mode"] = True
         msg = (
@@ -740,8 +997,9 @@ def process_message(user_input: str, state: dict) -> tuple:
         append_history(state, "assistant", msg)
         return msg, state, actions
 
-    # 4 ── True negative closing → close conversation ─────────────────────────
+    # 4 ── True negative closing → log + close ────────────────────────────────
     if is_true_negative_closing(user_input):
+        log_lead_if_ready(state, event_stage="true_negative")
         msg = (
             "Totally understand — no worries at all! 😊\n"
             "Feel free to reach out anytime if you change your mind. "
@@ -761,6 +1019,7 @@ def process_message(user_input: str, state: dict) -> tuple:
 
     # 4.6 ── User requesting a callback ──────────────────────────────────────
     if is_requesting_callback(user_input):
+        state["callback_requested"] = True   # priority signal for logging only
         if state["contact"]:
             msg = (
                 "Got it! I'll let Marc know you'd like him to reach out. "
@@ -774,18 +1033,33 @@ def process_message(user_input: str, state: dict) -> tuple:
         append_history(state, "assistant", msg)
         return msg, state, actions
 
-    # 5 ── Skip classification if we don't have a name yet ───────────────────
+    # 4.7 ── Budget negotiation ───────────────────────────────────────────────
+    if is_budget_negotiation(user_input):
+        state["follow_up_mode"] = True
+        if not state["contact"] and state["source"] not in ("fb", "ig"):
+            msg = (
+                "I'll flag this to Marc so he can see what's possible within your budget.\n"
+                "Could you share your contact number or email? "
+                "He'll reach out directly with any adjusted offer 🎧"
+            )
+        else:
+            msg = (
+                "Noted — I'll pass this along to Marc right away.\n"
+                "He'll review your event details and get back to you with options 🎧"
+            )
+        append_history(state, "assistant", msg)
+        return msg, state, actions
+
+    # 5 ── Skip classification if no name yet ────────────────────────────────
     if not state["name"]:
-        msg = (
-            "I'd love to help! Before anything else — what's your name? 😊"
-        )
+        msg = "I'd love to help! Before anything else — what's your name? 😊"
         append_history(state, "assistant", msg)
         return msg, state, actions
 
     # 6 ── Classify intent ────────────────────────────────────────────────────
     intent = classify_intent(user_input)
 
-    # 7 ── General inquiry → KB answer, no event-detail interrogation ─────────
+    # 7 ── General inquiry → KB answer ────────────────────────────────────────
     if intent == "general":
         return handle_general_inquiry(user_input, state, actions)
 
@@ -803,10 +1077,9 @@ def process_message(user_input: str, state: dict) -> tuple:
 
     fn = first_name(state)
 
-    # 10 ── Collect missing event details ──────────────────────────────────────
+    # 10 ── Collect missing event details ─────────────────────────────────────
     missing = get_missing_fields(state)
 
-    # Reset vague location so it gets re-asked
     if (
         "location" not in missing
         and is_location_too_vague(state["lead_info"]["location"])
@@ -832,7 +1105,7 @@ def process_message(user_input: str, state: dict) -> tuple:
         append_history(state, "assistant", msg)
         return msg, state, actions
 
-    # 11 ── Ask for contact (CLI / Streamlit only, once) ──────────────────────
+    # 11 ── Ask for contact (CLI / Streamlit only, once, before quote) ────────
     if should_ask_contact(state):
         state["asked_contact"] = True
         msg = (
@@ -849,25 +1122,34 @@ def process_message(user_input: str, state: dict) -> tuple:
 
 
 # ─────────────────────────────────────────
-# POST-QUOTE CLOSING
+# POST-QUOTE / PRE-QUOTE CLOSING
 # ─────────────────────────────────────────
 def handle_closing(user_input: str, state: dict, actions: dict) -> tuple | None:
     """
-    Call this before process_message once a quote has been given.
-    Keeps closing detection out of the main flow so it can't fire mid-conversation.
-    Returns a tuple or None.
+    Called before process_message on every turn.
+    Catches friendly closing signals, logs closing_signal stage, then closes.
     """
-    if state["quote_given"] and is_conversation_closing(user_input):
+    if is_conversation_closing(user_input):
         append_history(state, "user", user_input)
-        msg = (
-            "No worries! We'll get back to you within 24 hours.\n"
-            "Have a great day! 🎧"
-            if state["follow_up_mode"] else
-            "Sounds great! Feel free to message anytime if you have more questions.\n"
-            "Looking forward to making your event one to remember! 🎧"
-        )
+        log_lead_if_ready(state, event_stage="closing_signal")
+
+        if state["quote_given"]:
+            msg = (
+                "No worries! We'll get back to you within 24 hours.\n"
+                "Have a great day! 🎧"
+                if state["follow_up_mode"] else
+                "Sounds great! Feel free to message anytime if you have more questions.\n"
+                "Looking forward to making your event one to remember! 🎧"
+            )
+        else:
+            msg = (
+                "Thanks for reaching out! Feel free to come back anytime "
+                "if you have more questions or want to get a quote. 🎧"
+            )
+
         append_history(state, "assistant", msg)
         return msg, state, actions
+
     return None
 
 
@@ -875,7 +1157,6 @@ def handle_closing(user_input: str, state: dict, actions: dict) -> tuple | None:
 # WEBHOOK FORMATTER  (FB / IG)
 # ─────────────────────────────────────────
 def format_for_webhook(text: str) -> str:
-    """Strips markdown that FB/IG Messenger doesn't render. Keeps emoji."""
     text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
     text = re.sub(r"\*(.*?)\*",     r"\1", text)
     text = re.sub(r"_(.*?)_",       r"\1", text)
@@ -886,17 +1167,13 @@ def format_for_webhook(text: str) -> str:
 # SURFACE ADAPTERS
 # ─────────────────────────────────────────
 def chat_cli():
-    """
-    CLI runner — for testing in VS Code terminal.
-    Change source= to simulate different surfaces.
-    """
-    state = init_state(source="cli")   # ← "cli" | "streamlit" | "fb" | "ig"
+    """CLI runner — for local testing."""
+    state = init_state(source="cli")
 
     print("\n" + "─" * 50)
     print("DJ Marc Edward Bot  |  type 'exit' to quit")
     print("─" * 50 + "\n")
 
-    # Startup check — show error as first message if anything fails
     startup_error = startup_check()
     if startup_error:
         print(f"Bot:\n{startup_error}\n")
@@ -925,25 +1202,20 @@ def chat_cli():
 
         print(f"\nBot:\n{response}\n")
 
-        if actions.get("log_lead") and not state["lead_logged"]:
-            state["lead_logged"] = True
-            print("[SYSTEM] Lead logged.\n")
-
 
 def get_bot_response(user_input: str, state: dict) -> tuple:
     """
-    Streamlit adapter. Returns (response_text: str, updated_state: dict).
+    Streamlit adapter. Returns (response_text, updated_state).
 
     --- app.py usage ---
     if "state" not in st.session_state:
         startup_error = startup_check()
         if startup_error:
-            # render startup_error as first chat bubble and stop
+            # render startup_error as first bubble and stop
             return
         st.session_state.state = init_state(source="streamlit")
         greeting = get_greeting(st.session_state.state)
         st.session_state.state["greeted"] = True
-        # render greeting as first chat bubble
 
     response, st.session_state.state = get_bot_response(user_input, st.session_state.state)
     """
@@ -957,22 +1229,15 @@ def get_bot_response(user_input: str, state: dict) -> tuple:
 
 def handle_webhook_message(user_input: str, state: dict) -> tuple:
     """
-    FB / IG Messenger adapter. Returns (response_text: str, updated_state: dict).
+    FB / IG Messenger adapter. Returns (response_text, updated_state).
 
     --- Webhook handler pattern ---
-    1. On first contact, run startup_check(). If it returns an error string,
-       send that as the first message and do not proceed.
-    2. Load state from DB keyed on sender_id
-       (use init_state(source="fb") on first contact)
-    3. If state["greeted"] is False:
-           send get_greeting(state) via Graph API
-           state["greeted"] = True
+    1. On first contact, run startup_check(). Send error and stop if it fails.
+    2. Load state from DB keyed on sender_id (init_state(source="fb") on first contact)
+    3. If state["greeted"] is False: send get_greeting(state), set greeted = True
     4. response, state = handle_webhook_message(user_text, state)
     5. Send response via Graph API
     6. Save updated state back to DB
-
-    Note: history lives inside state, so it persists across webhook calls
-    automatically as long as you save/load state correctly between messages.
     """
     closing = handle_closing(user_input, state, {"log_lead": False})
     if closing:
