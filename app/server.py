@@ -23,10 +23,12 @@ from flask import Flask, request, jsonify, send_from_directory
 from app.bot import (
     init_state,
     get_greeting,
+    get_bot_response,
     process_message,
     handle_closing,
     handle_webhook_message,
     format_for_webhook,
+    startup_check,
 )
 from app.kb_loader import load_knowledge_base
 
@@ -38,10 +40,44 @@ app = Flask(__name__, static_folder="../frontend", static_url_path="")
 # In production, swap this dict for Redis or Firestore.
 _sessions: dict = {}
 
-
 # ── Startup ──────────────────────────────────────────────────────────────────
 with app.app_context():
-    load_knowledge_base()
+    startup_error = startup_check()
+    if startup_error:
+        print(f"[STARTUP] {startup_error}")
+
+
+# ── State Migration ───────────────────────────────────────────────────────────
+def migrate_state(state: dict) -> dict:
+    """
+    Ensures a state dict received from the browser contains all keys expected
+    by the current version of bot.py.
+
+    When bot.py is updated with new state fields, old state dicts round-tripped
+    from the browser won't have those keys — causing KeyErrors mid-conversation.
+    This function backfills any missing keys with their default values so old
+    sessions continue working without a hard reset.
+
+    Add a new entry here whenever a new key is added to init_state().
+    """
+    import uuid
+    defaults = {
+        # v5 additions
+        "general_inquiry_topic":    None,
+        "callback_requested":       False,
+        "closing_signal_fired":     False,
+        # v5.1 additions
+        "session_id":               str(uuid.uuid4()),
+        "fingerprint":              None,
+        "quote_stage_logged":       False,
+        # v5.2 additions
+        "post_quote_contact_asked": False,
+    }
+    for key, default in defaults.items():
+        if key not in state:
+            state[key] = default
+    return state
+
 
 # ── Homepage ──────────────────────────────────────────────────────────────────
 @app.route("/")
@@ -57,7 +93,8 @@ def api_chat():
     Returns:  { "response": str, "state": dict }
 
     State is round-tripped through the browser so the server stays stateless.
-    This means no server-side session store is needed for the website chat.
+    migrate_state() ensures old state dicts from previous bot versions are
+    backfilled with any new keys before processing.
     """
     data    = request.get_json(force=True)
     message = data.get("message", "").strip()
@@ -65,6 +102,9 @@ def api_chat():
 
     if not message:
         return jsonify({"error": "Empty message"}), 400
+
+    # Backfill any missing keys from older state dicts
+    state = migrate_state(state)
 
     closing = handle_closing(message, state, {"log_lead": False})
     if closing:
@@ -123,7 +163,7 @@ def webhook_receive():
             if sender_id not in _sessions:
                 _sessions[sender_id] = init_state(source=source)
 
-            state = _sessions[sender_id]
+            state = migrate_state(_sessions[sender_id])
 
             # Send greeting on first contact
             if not state["greeted"]:
@@ -168,5 +208,4 @@ def health():
 
 # ── Local Dev ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    load_knowledge_base()
     app.run(debug=True, port=5000)
