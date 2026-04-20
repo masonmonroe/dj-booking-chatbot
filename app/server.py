@@ -106,6 +106,9 @@ def api_chat():
     # Backfill any missing keys from older state dicts
     state = migrate_state(state)
 
+    # Backfill any missing keys from older state dicts
+    state = migrate_state(state)
+
     closing = handle_closing(message, state, {"log_lead": False})
     if closing:
         response_text, state, _ = closing
