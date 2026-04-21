@@ -49,9 +49,11 @@ v5.1 additions
 - Fingerprint : MD5 hash of name+contact+date+location+inquiry_topic
 - Event Stage : "quote_generated" | "closing_signal" | "true_negative"
 - Retry logic : 3x exponential backoff on form submission
-- Error log form : FORM-001 failures POST to separate error log sheet
-    FORM-001  Lead form failed after 3 retries
+- Error log form : failures POST to separate error log sheet
+    FORM-001  POST failed after 3 retries (network / timeout)
     FORM-002  Error log submission failed (silent)
+    FORM-003  Unexpected HTTP status — wrong URL or entry IDs
+    FORM-004  Payload missing required fields before POST attempted
 
 v5.2 fixes
 ────────────
@@ -77,6 +79,8 @@ import requests
 from google import genai
 from app.kb_loader import load_knowledge_base, retrieve_context
 from datetime import datetime, date
+from dotenv import load_dotenv
+load_dotenv()
 
 # ─────────────────────────────────────────
 # CONFIG
@@ -594,21 +598,16 @@ def is_requesting_callback(text: str) -> bool:
     return any(p in text.lower() for p in phrases)
 
 
-def maybe_acknowledge_contact(state: dict, actions: dict) -> str | None:
+def contact_just_captured(state: dict) -> bool:
     """
-    Returns an acknowledgement string if contact was just captured, None otherwise.
-    Does NOT return a full tuple — caller decides whether to append this to another
-    response or return it standalone, fixing the quote-skip bug.
+    Returns True once if contact was set this turn and hasn't been acknowledged yet.
+    Flips contact_followed_up to True so it only fires once per session.
+    Pure boolean — callers decide what message to send based on context.
     """
     if state["contact"] and not state["contact_followed_up"]:
         state["contact_followed_up"] = True
-        fn  = first_name(state)
-        tag = f", {fn}" if fn else ""
-        return (
-            f"Got it{tag}! I've noted your contact info. "
-            "Marc or his team will be in touch with you directly 🎧\n\n"
-        )
-    return None
+        return True
+    return False
 
 
 # ─────────────────────────────────────────
@@ -714,14 +713,45 @@ def log_error_to_form(error_code: str, session_id: str, payload: dict, context: 
 def submit_to_google_form(payload: dict, state: dict, context: str) -> bool:
     """
     POSTs to leads form with exponential backoff retry (max 3 attempts: 2s→4s→8s).
-    On total failure: surfaces err("FORM-001") to console and logs to error sheet.
+
+    Error codes:
+      FORM-001  POST failed on all retries (network / timeout)
+      FORM-003  Unexpected HTTP status (wrong URL or entry IDs — Google rejected)
+      FORM-004  Payload missing required fields before POST attempted
     """
+    # FORM-004 — validate required fields before attempting POST
+    required = [LEADS_FIELDS["name"], LEADS_FIELDS["session_id"]]
+    if not all(payload.get(f) for f in required):
+        print(err("FORM-004"))
+        log_error_to_form(
+            error_code="FORM-004",
+            session_id=state["session_id"],
+            payload=payload,
+            context=f"{context} | missing required fields",
+        )
+        return False
+
     delay = FORM_RETRY_DELAY
+
     for attempt in range(1, FORM_MAX_RETRIES + 1):
         try:
-            response = requests.post(LEADS_FORM_URL, data=payload, timeout=10)
-            if response.status_code in (200, 302):
+            response    = requests.post(LEADS_FORM_URL, data=payload, timeout=10)
+            last_status = response.status_code
+
+            if last_status in (200, 302):
                 return True
+
+            # Got a response but not a success code — FORM-003
+            # Wrong URL or entry IDs. No point retrying.
+            print(err("FORM-003") + f" | HTTP {last_status}")
+            log_error_to_form(
+                error_code="FORM-003",
+                session_id=state["session_id"],
+                payload=payload,
+                context=f"{context} | HTTP {last_status}",
+            )
+            return False
+
         except Exception as e:
             print(f"[WARN] Form attempt {attempt}/{FORM_MAX_RETRIES} failed: {e}")
 
@@ -729,7 +759,7 @@ def submit_to_google_form(payload: dict, state: dict, context: str) -> bool:
             time.sleep(delay)
             delay *= 2
 
-    # All retries exhausted
+    # All retries exhausted with no response — FORM-001 (network/timeout)
     print(err("FORM-001"))
     log_error_to_form(
         error_code="FORM-001",
@@ -827,12 +857,14 @@ Guidelines:
 # ─────────────────────────────────────────
 # QUOTE GENERATION  (memory-aware)
 # ─────────────────────────────────────────
-def generate_quote(state: dict, actions: dict, contact_ack: str = "") -> tuple:
+def generate_quote(state: dict, actions: dict, ack_in_quote: bool = False) -> tuple:
     """
     All four lead fields present. Logs quote_generated stage immediately.
 
-    contact_ack: optional acknowledgement string prepended to the response.
-                 Passed in when contact was just captured in the same turn.
+    ack_in_quote: True when contact was just captured this turn (Scenario 1).
+                  Tells the LLM to open with a brief warm acknowledgement
+                  before moving into the quote. Never used for Scenario 2
+                  (post-quote contact capture) — that gets a standalone ack.
 
     Two CTA variants:
       Version A — contact already given: quote + DJ contact info
@@ -881,6 +913,25 @@ def generate_quote(state: dict, actions: dict, contact_ack: str = "") -> tuple:
             "📸 IG: @djmarcedward"
         )
 
+    # ack_in_quote=True  → Scenario 1: contact given on first ask, right before quote.
+    #                      Tell LLM to open with one brief warm line before the quote.
+    # contact in state   → contact was given earlier and already acknowledged.
+    #                      Tell LLM not to mention it again — no repeat acks.
+    # no contact         → no instruction needed.
+    if ack_in_quote:
+        contact_note = (
+            f"- The user JUST provided their contact info this turn. "
+            f"Open your response with one brief, warm sentence acknowledging it "
+            f"(e.g. 'Thanks for that, {fn}!') then move straight into the quote.\n"
+        )
+    elif state["contact"]:
+        contact_note = (
+            "- The user's contact info is already on file and was acknowledged earlier. "
+            "Do NOT mention, thank them for, or reference it anywhere in this response.\n"
+        )
+    else:
+        contact_note = ""
+
     prompt = f"""
 You are DJ Marc's proactive booking assistant.
 You can:
@@ -914,7 +965,7 @@ Instructions:
 - Mention the optional Basic Lights & Sound Package (₱3,000 add-on)
 - Clearly state exclusions: transport (varies by distance), food, accommodation
 - Warm, confident tone — not a price sheet
-- End your message with this call-to-action block (append verbatim):
+{contact_note}- End your message with this call-to-action block (append verbatim):
 
 {cta}
 """
@@ -926,10 +977,8 @@ Instructions:
     state["quote_given"] = True
     actions["log_lead"]  = True
 
-    # Prepend contact acknowledgement if contact was captured this same turn
-    if contact_ack:
-        response = contact_ack + response
-
+    # ack_in_quote is passed as a prompt instruction — LLM handles the
+    # acknowledgement naturally inside the quote. No string prepending needed.
     append_history(state, "assistant", response)
 
     # Log immediately — catches users who ghost after receiving quote
@@ -965,23 +1014,57 @@ def process_message(user_input: str, state: dict) -> tuple:
         append_history(state, "assistant", msg)
         return msg, state, actions
 
-    # 2 ── Acknowledge newly captured contact ─────────────────────────────────
-    #      Returns a string (or None) — does NOT return early anymore.
-    #      If we're on the booking path with all fields present, the ack is
-    #      prepended to the quote instead of being sent as a standalone message.
-    contact_ack = maybe_acknowledge_contact(state, actions)
+    # 2 ── Handle newly captured contact ────────────────────────────────────────
+    #
+    #  Three scenarios, handled explicitly:
+    #
+    #  Scenario 1 — Contact given on FIRST ask (pre-quote, all fields ready):
+    #    Route straight to quote. ack_in_quote=True tells the LLM to open with
+    #    one brief warm line before the estimate. No standalone ack sent.
+    #
+    #  Scenario 2 — Contact given AFTER quote (second ask folded into quote body):
+    #    Send a standalone ack referencing the specific event. Do NOT regenerate
+    #    the quote. Conversation continues normally from here.
+    #
+    #  Scenarios 4–7 — Contact dropped out of the blue (mid-collection, general
+    #    inquiry, budget negotiation, proactive offer):
+    #    Send a generic standalone ack. Conversation continues from where it was.
+    #
+    #  Block 4.6 (callback request) manages its own messaging independently —
+    #  contact_just_captured() will still flip the flag there, but block 4.6
+    #  fires before block 2 is reached so it owns that response.
 
-    # 2a ── If contact was just captured AND all booking fields are present,
-    #       skip straight to quote generation with the ack prepended.
-    #       This fixes the bug where the contact turn consumed the quote turn.
-    if contact_ack and state["booking_intent"] and not get_missing_fields(state):
-        return generate_quote(state, actions, contact_ack=contact_ack)
+    just_captured = contact_just_captured(state)
+    if just_captured:
+        fn = first_name(state) or "there"
 
-    # 2b ── Otherwise send the ack as a standalone message if applicable
-    if contact_ack:
-        msg = contact_ack.strip()
-        append_history(state, "assistant", msg)
-        return msg, state, actions
+        # 🚫 HARD STOP — quote generation takes priority over all ack branches.
+        # If all booking conditions are met and no quote has been given yet,
+        # generate the quote immediately. The LLM opens with a brief ack (ack_in_quote).
+        # Nothing else in this block runs.
+        if state["booking_intent"] and not get_missing_fields(state) and not state["quote_given"]:
+            # Scenario 1 — contact given on first ask, all fields present, no quote yet
+            return generate_quote(state, actions, ack_in_quote=True)
+
+        elif state["quote_given"]:
+            # Scenario 2 — contact given after quote (responded to in-quote contact ask)
+            event_type = state["lead_info"].get("event_type") or "your event"
+            msg = (
+                f"Thank you, {fn}! Marc will reach out to you directly "
+                f"with a formal quotation for {event_type}. "
+                "Looking forward to making it a great one! 🎧"
+            )
+            append_history(state, "assistant", msg)
+            return msg, state, actions
+
+        else:
+            # Scenarios 4–7 — contact dropped mid-flow or out of the blue
+            msg = (
+                f"Got it, {fn}! I've noted your contact info. "
+                "Marc or his team will be in touch with you directly. 🎧"
+            )
+            append_history(state, "assistant", msg)
+            return msg, state, actions
 
     # 3 ── Price objection → rebuttal ─────────────────────────────────────────
     if is_price_objection(user_input):
@@ -1132,13 +1215,22 @@ def handle_closing(user_input: str, state: dict, actions: dict) -> tuple | None:
         log_lead_if_ready(state, event_stage="closing_signal")
 
         if state["quote_given"]:
-            msg = (
-                "No worries! We'll get back to you within 24 hours.\n"
-                "Have a great day! 🎧"
-                if state["follow_up_mode"] else
-                "Sounds great! Feel free to message anytime if you have more questions.\n"
-                "Looking forward to making your event one to remember! 🎧"
-            )
+            if state["follow_up_mode"]:
+                msg = (
+                    "No worries! We'll get back to you within 24 hours.\n"
+                    "Have a great day! 🎧"
+                )
+            elif not state["contact"]:
+                msg = (
+                    "Sounds great! Feel free to message anytime if you have more questions.\n"
+                    "You can always reach Marc directly at the details above. "
+                    "Looking forward to making your event one to remember! 🎧"
+                )
+            else:
+                msg = (
+                    "Sounds great! Feel free to message anytime if you have more questions.\n"
+                    "Looking forward to making your event one to remember! 🎧"
+                )
         else:
             msg = (
                 "Thanks for reaching out! Feel free to come back anytime "
